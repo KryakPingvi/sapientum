@@ -32,9 +32,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import {
-  SqliteStaffStore, StaffService, AppointFirstAdministrator, createStaffRoutes,
-} from './modules/staff/index.js';
+import { SqliteStaffStore, StaffService, AppointFirstAdministrator, createStaffRoutes } from './modules/staff/index.js';
 
 // Пути задаёт приложение. Этот пример предполагает запуск из корня репозитория.
 mkdirSync('data', { recursive: true });
@@ -56,12 +54,12 @@ const provisioning = new AppointFirstAdministrator(store, accountDirectory, runt
 
 Адаптер не запускает сервер. Сервер разбирает JSON, проверяет сессию и передаёт `principal: { userId }` либо `null`. Идентификатор пользователя берётся только из проверенной сессии; `actorId` из тела запроса не используется.
 
-| Метод | Путь | Тело / параметры |
-| --- | --- | --- |
-| GET | `/tournaments/:id/staff` | `?status=active` или `?status=excluded` |
-| POST | `/tournaments/:id/staff` | `{ "userId": "...", "roles": ["jury"] }` |
-| PUT | `/tournaments/:id/staff/:memberId/roles` | `{ "roles": ["jury", "author"], "expectedVersion": 1 }` |
-| POST | `/tournaments/:id/staff/:memberId/exclude` | `{ "expectedVersion": 1 }` |
+| Метод | Путь                                       | Тело / параметры                                        |
+| ----- | ------------------------------------------ | ------------------------------------------------------- |
+| GET   | `/tournaments/:id/staff`                   | `?status=active` или `?status=excluded`                 |
+| POST  | `/tournaments/:id/staff`                   | `{ "userId": "...", "roles": ["jury"] }`                |
+| PUT   | `/tournaments/:id/staff/:memberId/roles`   | `{ "roles": ["jury", "author"], "expectedVersion": 1 }` |
+| POST  | `/tournaments/:id/staff/:memberId/exclude` | `{ "expectedVersion": 1 }`                              |
 
 Все четыре операции требуют роли администратора выбранного турнира. DTO содержат идентификаторы пользователей; имена для отображения нужно получать из каталога аккаунтов.
 

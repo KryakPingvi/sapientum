@@ -25,7 +25,9 @@ export interface StaffAuditEntry {
   after: StaffMemberDto;
 }
 
-export interface StaffAuditWriter { append(entry: StaffAuditEntry): void; }
+export interface StaffAuditWriter {
+  append(entry: StaffAuditEntry): void;
+}
 
 export interface StaffTransaction {
   /** Repository operations and audit append commit together; callback must be synchronous. */
@@ -33,5 +35,10 @@ export interface StaffTransaction {
 }
 
 /** Adapter to the account module; account creation is a separate operation. */
-export interface AccountDirectory { exists(userId: string): boolean; }
-export interface StaffRuntime { newId(): string; now(): string; }
+export interface AccountDirectory {
+  exists(userId: string): boolean;
+}
+export interface StaffRuntime {
+  newId(): string;
+  now(): string;
+}

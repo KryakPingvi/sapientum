@@ -2,7 +2,14 @@ import type { StaffMemberDto, StaffStatus } from '@sapientum/contracts/staff';
 import { StaffError } from '../domain/staff-error.js';
 import { StaffMember, requireId } from '../domain/staff-member.js';
 import { StaffAccess } from './staff-access.js';
-import type { AccountDirectory, StaffAuditEntry, StaffAuditWriter, StaffRepository, StaffRuntime, StaffTransaction } from './ports.js';
+import type {
+  AccountDirectory,
+  StaffAuditEntry,
+  StaffAuditWriter,
+  StaffRepository,
+  StaffRuntime,
+  StaffTransaction,
+} from './ports.js';
 
 export class StaffService {
   constructor(
@@ -26,7 +33,13 @@ export class StaffService {
     });
   }
 
-  setRoles(input: { actorId: string; tournamentId: string; memberId: string; roles: unknown; expectedVersion: number }): StaffMemberDto {
+  setRoles(input: {
+    actorId: string;
+    tournamentId: string;
+    memberId: string;
+    roles: unknown;
+    expectedVersion: number;
+  }): StaffMemberDto {
     return this.transactions.run(({ members, audit }) => {
       new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
       const before = this.get(members, input.tournamentId, input.memberId);
@@ -56,7 +69,7 @@ export class StaffService {
       if (input.status !== 'active' && input.status !== 'excluded') {
         throw new StaffError('INVALID_INPUT', 'Unknown membership status.');
       }
-      return members.list(input.tournamentId, input.status).map(member => member.snapshot());
+      return members.list(input.tournamentId, input.status).map((member) => member.snapshot());
     });
   }
 
@@ -68,16 +81,32 @@ export class StaffService {
   }
 
   private protectAdministrator(members: StaffRepository, before: StaffMember, after: StaffMember): void {
-    if (before.hasRole('administrator') && !after.hasRole('administrator') &&
-        members.countAdministrators(before.snapshot().tournamentId) <= 1) {
+    if (
+      before.hasRole('administrator') &&
+      !after.hasRole('administrator') &&
+      members.countAdministrators(before.snapshot().tournamentId) <= 1
+    ) {
       throw new StaffError('LAST_ADMINISTRATOR', 'The tournament must retain an active administrator.');
     }
   }
 
-  private record(audit: StaffAuditWriter, action: StaffAuditEntry['action'], actorId: string,
-    before: StaffMember | null, after: StaffMember): void {
+  private record(
+    audit: StaffAuditWriter,
+    action: StaffAuditEntry['action'],
+    actorId: string,
+    before: StaffMember | null,
+    after: StaffMember,
+  ): void {
     const snapshot = after.snapshot();
-    audit.append({ id: this.runtime.newId(), action, actorId, at: this.runtime.now(),
-      tournamentId: snapshot.tournamentId, memberId: snapshot.id, before: before?.snapshot() ?? null, after: snapshot });
+    audit.append({
+      id: this.runtime.newId(),
+      action,
+      actorId,
+      at: this.runtime.now(),
+      tournamentId: snapshot.tournamentId,
+      memberId: snapshot.id,
+      before: before?.snapshot() ?? null,
+      after: snapshot,
+    });
   }
 }

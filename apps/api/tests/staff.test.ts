@@ -7,7 +7,14 @@ import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
 import { STAFF_ROLES } from '@sapientum/contracts/staff';
-import { AppointFirstAdministrator, SqliteStaffStore, StaffAccess, StaffError, StaffService, createStaffRoutes } from '../src/modules/staff/index.js';
+import {
+  AppointFirstAdministrator,
+  SqliteStaffStore,
+  StaffAccess,
+  StaffError,
+  StaffService,
+  createStaffRoutes,
+} from '../src/modules/staff/index.js';
 import type { StaffTransaction } from '../src/modules/staff/application/ports.js';
 
 const migration = readFileSync(new URL('../../migrations/001-staff.sql', import.meta.url), 'utf8');
@@ -30,7 +37,12 @@ function isError(code: StaffError['code']) {
 test('all roles are independent, deduplicated, and snapshots cannot be mutated', () => {
   const { store, service } = fixture();
   try {
-    const alice = service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: [...STAFF_ROLES, 'jury'] });
+    const alice = service.add({
+      actorId: 'admin',
+      tournamentId: 't1',
+      userId: 'alice',
+      roles: [...STAFF_ROLES, 'jury'],
+    });
     assert.equal(alice.roles.length, 5);
     assert.throws(() => (alice.roles as string[]).push('jury'), TypeError);
     const bob = service.add({ actorId: 'admin', tournamentId: 't1', userId: 'bob', roles: ['organizer'] });
@@ -40,7 +52,9 @@ test('all roles are independent, deduplicated, and snapshots cannot be mutated',
       assert.equal(access.allows('t1', bob.userId, 'staff.manage'), false);
       assert.equal(access.allows('t1', bob.userId, 'reviews.check'), false);
     });
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });
 
 test('addition rejects missing accounts, invalid roles and duplicate membership', () => {
@@ -53,13 +67,20 @@ test('addition rejects missing accounts, invalid roles and duplicate membership'
     service.add(input);
     assert.throws(() => service.add(input), isError('DUPLICATE_MEMBER'));
     assert.equal(service.list({ actorId: 'admin', tournamentId: 't1', status: 'active' }).length, 2);
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });
 
 test('excluded members retain history and immediately lose all permissions', () => {
   const { store, service } = fixture();
   try {
-    const alice = service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: ['jury', 'administrator'] });
+    const alice = service.add({
+      actorId: 'admin',
+      tournamentId: 't1',
+      userId: 'alice',
+      roles: ['jury', 'administrator'],
+    });
     const excluded = service.exclude({ actorId: 'admin', tournamentId: 't1', memberId: alice.id, expectedVersion: 1 });
     assert.deepEqual(excluded.roles, alice.roles);
     assert.equal(excluded.excludedBy, 'admin');
@@ -67,10 +88,24 @@ test('excluded members retain history and immediately lose all permissions', () 
     store.run(({ members }) => assert.equal(new StaffAccess(members).allows('t1', 'alice', 'reviews.check'), false));
     assert.throws(() => service.list({ actorId: 'alice', tournamentId: 't1', status: 'active' }), isError('FORBIDDEN'));
     assert.equal(service.list({ actorId: 'admin', tournamentId: 't1', status: 'excluded' })[0]?.id, alice.id);
-    assert.throws(() => service.setRoles({ actorId: 'admin', tournamentId: 't1', memberId: alice.id,
-      roles: ['jury'], expectedVersion: 2 }), isError('MEMBER_EXCLUDED'));
-    assert.throws(() => service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: [] }), isError('DUPLICATE_MEMBER'));
-  } finally { store.close(); }
+    assert.throws(
+      () =>
+        service.setRoles({
+          actorId: 'admin',
+          tournamentId: 't1',
+          memberId: alice.id,
+          roles: ['jury'],
+          expectedVersion: 2,
+        }),
+      isError('MEMBER_EXCLUDED'),
+    );
+    assert.throws(
+      () => service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: [] }),
+      isError('DUPLICATE_MEMBER'),
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test('the last administrator cannot be excluded or have the role removed', () => {
@@ -81,9 +116,17 @@ test('the last administrator cannot be excluded or have the role removed', () =>
     assert.throws(() => service.setRoles({ ...input, roles: ['organizer'] }), isError('LAST_ADMINISTRATOR'));
     const bob = service.add({ actorId: 'admin', tournamentId: 't1', userId: 'bob', roles: ['administrator'] });
     service.setRoles({ ...input, roles: ['organizer'] });
-    assert.throws(() => service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: [] }), isError('FORBIDDEN'));
-    assert.throws(() => service.exclude({ actorId: 'bob', tournamentId: 't1', memberId: bob.id, expectedVersion: 1 }), isError('LAST_ADMINISTRATOR'));
-  } finally { store.close(); }
+    assert.throws(
+      () => service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: [] }),
+      isError('FORBIDDEN'),
+    );
+    assert.throws(
+      () => service.exclude({ actorId: 'bob', tournamentId: 't1', memberId: bob.id, expectedVersion: 1 }),
+      isError('LAST_ADMINISTRATOR'),
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test('membership and permissions are scoped to the tournament', () => {
@@ -92,9 +135,14 @@ test('membership and permissions are scoped to the tournament', () => {
     bootstrap.execute({ tournamentId: 't2', userId: 'bob', actorId: 'owner' });
     const alice = service.add({ actorId: 'bob', tournamentId: 't2', userId: 'alice', roles: ['jury'] });
     assert.throws(() => service.list({ actorId: 'admin', tournamentId: 't2', status: 'active' }), isError('FORBIDDEN'));
-    assert.throws(() => service.exclude({ actorId: 'admin', tournamentId: 't1', memberId: alice.id, expectedVersion: 1 }), isError('NOT_FOUND'));
+    assert.throws(
+      () => service.exclude({ actorId: 'admin', tournamentId: 't1', memberId: alice.id, expectedVersion: 1 }),
+      isError('NOT_FOUND'),
+    );
     store.run(({ members }) => assert.equal(new StaffAccess(members).allows('t1', 'alice', 'reviews.check'), false));
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });
 
 test('stale edits are rejected instead of overwriting newer roles', () => {
@@ -106,26 +154,48 @@ test('stale edits are rejected instead of overwriting newer roles', () => {
     assert.throws(() => service.exclude(input), isError('VERSION_CONFLICT'));
     assert.throws(() => service.setRoles({ ...input, roles: ['jury'] }), isError('VERSION_CONFLICT'));
     store.run(({ members }) => assert.deepEqual(members.findById('t1', alice.id)?.snapshot().roles, ['author']));
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });
 
 test('audit failure rolls back the membership change', () => {
   const { store, service } = fixture();
   try {
     const failing: StaffTransaction = {
-      run: operation => store.run(({ members }) => operation({ members, audit: { append: () => { throw new Error('audit unavailable'); } } })),
+      run: (operation) =>
+        store.run(({ members }) =>
+          operation({
+            members,
+            audit: {
+              append: () => {
+                throw new Error('audit unavailable');
+              },
+            },
+          }),
+        ),
     };
     const brokenService = new StaffService(failing, accounts, runtime);
-    assert.throws(() => brokenService.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: ['jury'] }), /audit unavailable/);
+    assert.throws(
+      () => brokenService.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: ['jury'] }),
+      /audit unavailable/,
+    );
     assert.equal(service.list({ actorId: 'admin', tournamentId: 't1', status: 'active' }).length, 1);
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });
 
 test('initial provisioning is possible only for an empty committee', () => {
   const { store, bootstrap } = fixture();
   try {
-    assert.throws(() => bootstrap.execute({ tournamentId: 't1', userId: 'bob', actorId: 'owner' }), isError('ALREADY_INITIALIZED'));
-  } finally { store.close(); }
+    assert.throws(
+      () => bootstrap.execute({ tournamentId: 't1', userId: 'bob', actorId: 'owner' }),
+      isError('ALREADY_INITIALIZED'),
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test('HTTP adapter validates requests and trusts only the authenticated principal', () => {
@@ -134,19 +204,37 @@ test('HTTP adapter validates requests and trusts only the authenticated principa
     const route = createStaffRoutes(service);
     const base = { method: 'POST', url: '/tournaments/t1/staff', principal: { userId: 'admin' } };
     assert.equal(route({ ...base, principal: null, body: { actorId: 'admin' } }).status, 401);
-    assert.equal(route({ ...base, principal: { userId: 'alice' }, body: { actorId: 'admin', userId: 'bob', roles: [] } }).status, 403);
+    assert.equal(
+      route({ ...base, principal: { userId: 'alice' }, body: { actorId: 'admin', userId: 'bob', roles: [] } }).status,
+      403,
+    );
     assert.equal(route({ ...base, body: { userId: 'alice', roles: ['unknown'] } }).status, 400);
     const added = route({ ...base, body: { userId: 'alice', roles: ['jury'] } });
     assert.equal(added.status, 201);
     const member = added.body as { id: string };
-    assert.equal(route({ ...base, method: 'PUT', url: `/tournaments/t1/staff/${member.id}/roles`,
-      body: { roles: ['author'], expectedVersion: 1 } }).status, 200);
-    assert.equal(route({ ...base, url: `/tournaments/t1/staff/${member.id}/exclude`, body: { expectedVersion: 1 } }).status, 409);
-    assert.equal(route({ ...base, url: `/tournaments/t1/staff/${member.id}/exclude`, body: { expectedVersion: 2 } }).status, 200);
+    assert.equal(
+      route({
+        ...base,
+        method: 'PUT',
+        url: `/tournaments/t1/staff/${member.id}/roles`,
+        body: { roles: ['author'], expectedVersion: 1 },
+      }).status,
+      200,
+    );
+    assert.equal(
+      route({ ...base, url: `/tournaments/t1/staff/${member.id}/exclude`, body: { expectedVersion: 1 } }).status,
+      409,
+    );
+    assert.equal(
+      route({ ...base, url: `/tournaments/t1/staff/${member.id}/exclude`, body: { expectedVersion: 2 } }).status,
+      200,
+    );
     assert.equal(route({ ...base, method: 'GET', url: '/tournaments/t1/staff?status=excluded' }).status, 200);
     assert.equal(route({ ...base, method: 'GET', url: '/tournaments/t1/staff?status=invalid' }).status, 400);
     assert.equal(route({ ...base, url: '/tournaments/%ZZ/staff' }).status, 400);
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });
 
 test('data and audit persist after reopening the database', () => {
@@ -172,9 +260,13 @@ test('data and audit persist after reopening the database', () => {
       assert.deepEqual(JSON.parse(String(entry.before_snapshot)).roles, ['jury']);
       assert.deepEqual(JSON.parse(String(entry.after_snapshot)).roles, ['author']);
       assert.ok(entry.at);
+    } finally {
+      db.close();
     }
-    finally { db.close(); }
-  } finally { reopened.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    reopened.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('concurrent exclusions through independent connections retain one administrator', async () => {
@@ -185,28 +277,47 @@ test('concurrent exclusions through independent connections retain one administr
   store.close();
   const workers: Worker[] = [];
   try {
-    const outcomes = [admin, bob].map(member => {
+    const outcomes = [admin, bob].map((member) => {
       const worker = new Worker(new URL('./staff-concurrency-worker.js', import.meta.url), {
         workerData: { path, actorId: member.userId, memberId: member.id },
       });
       workers.push(worker);
       let start!: () => void;
-      const ready = new Promise<void>(resolve => { start = resolve; });
+      const ready = new Promise<void>((resolve) => {
+        start = resolve;
+      });
       const result = new Promise<string>((resolve, reject) => {
-        worker.on('message', message => { if (message === 'ready') start(); else resolve(String(message)); });
-        worker.on('error', error => { start(); reject(error); });
-        worker.on('exit', code => { if (code !== 0) { start(); reject(new Error(`Worker exited with ${code}`)); } });
+        worker.on('message', (message) => {
+          if (message === 'ready') start();
+          else resolve(String(message));
+        });
+        worker.on('error', (error) => {
+          start();
+          reject(error);
+        });
+        worker.on('exit', (code) => {
+          if (code !== 0) {
+            start();
+            reject(new Error(`Worker exited with ${code}`));
+          }
+        });
       });
       return { ready, result, worker };
     });
-    await Promise.all(outcomes.map(outcome => outcome.ready));
+    await Promise.all(outcomes.map((outcome) => outcome.ready));
     for (const outcome of outcomes) outcome.worker.postMessage('start');
-    assert.deepEqual((await Promise.all(outcomes.map(outcome => outcome.result))).sort(), ['LAST_ADMINISTRATOR', 'ok']);
+    assert.deepEqual((await Promise.all(outcomes.map((outcome) => outcome.result))).sort(), [
+      'LAST_ADMINISTRATOR',
+      'ok',
+    ]);
     const reopened = new SqliteStaffStore(path);
-    try { reopened.run(({ members }) => assert.equal(members.countAdministrators('t1'), 1)); }
-    finally { reopened.close(); }
+    try {
+      reopened.run(({ members }) => assert.equal(members.countAdministrators('t1'), 1));
+    } finally {
+      reopened.close();
+    }
   } finally {
-    await Promise.all(workers.map(worker => worker.terminate()));
+    await Promise.all(workers.map((worker) => worker.terminate()));
     rmSync(dir, { recursive: true, force: true });
   }
 });

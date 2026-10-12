@@ -9,7 +9,10 @@ export interface StaffHttpRequest {
   principal: { userId: string } | null;
 }
 
-export interface StaffHttpResponse { status: number; body: unknown; }
+export interface StaffHttpResponse {
+  status: number;
+  body: unknown;
+}
 
 function objectBody(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -19,9 +22,15 @@ function objectBody(value: unknown): Record<string, unknown> {
 }
 
 const ERROR_STATUS = {
-  INVALID_INPUT: 400, FORBIDDEN: 403, NOT_FOUND: 404, USER_NOT_FOUND: 404,
-  DUPLICATE_MEMBER: 409, MEMBER_EXCLUDED: 409, LAST_ADMINISTRATOR: 409,
-  VERSION_CONFLICT: 409, ALREADY_INITIALIZED: 409,
+  INVALID_INPUT: 400,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  USER_NOT_FOUND: 404,
+  DUPLICATE_MEMBER: 409,
+  MEMBER_EXCLUDED: 409,
+  LAST_ADMINISTRATOR: 409,
+  VERSION_CONFLICT: 409,
+  ALREADY_INITIALIZED: 409,
 } as const;
 
 /** Framework-independent HTTP adapter; authentication and JSON parsing belong to the host server. */
@@ -45,19 +54,28 @@ export function createStaffRoutes(service: StaffService) {
         if (typeof body.userId !== 'string') throw new StaffError('INVALID_INPUT', 'userId is required.');
         return { status: 201, body: service.add({ actorId, tournamentId, userId: body.userId, roles: body.roles }) };
       }
-      if (memberId && ((match[3] === '/roles' && request.method === 'PUT') ||
-          (match[3] === '/exclude' && request.method === 'POST'))) {
+      if (
+        memberId &&
+        ((match[3] === '/roles' && request.method === 'PUT') || (match[3] === '/exclude' && request.method === 'POST'))
+      ) {
         const body = objectBody(request.body);
-        if (typeof body.expectedVersion !== 'number' || !Number.isInteger(body.expectedVersion) || body.expectedVersion < 1) {
+        if (
+          typeof body.expectedVersion !== 'number' ||
+          !Number.isInteger(body.expectedVersion) ||
+          body.expectedVersion < 1
+        ) {
           throw new StaffError('INVALID_INPUT', 'expectedVersion must be a positive integer.');
         }
         const input = { actorId, tournamentId, memberId, expectedVersion: body.expectedVersion };
-        return { status: 200, body: match[3] === '/roles'
-          ? service.setRoles({ ...input, roles: body.roles }) : service.exclude(input) };
+        return {
+          status: 200,
+          body: match[3] === '/roles' ? service.setRoles({ ...input, roles: body.roles }) : service.exclude(input),
+        };
       }
       return { status: 405, body: { code: 'METHOD_NOT_ALLOWED' } };
     } catch (error) {
-      if (error instanceof StaffError) return { status: ERROR_STATUS[error.code], body: { code: error.code, message: error.message } };
+      if (error instanceof StaffError)
+        return { status: ERROR_STATUS[error.code], body: { code: error.code, message: error.message } };
       if (error instanceof URIError) return { status: 400, body: { code: 'INVALID_INPUT' } };
       throw error;
     }

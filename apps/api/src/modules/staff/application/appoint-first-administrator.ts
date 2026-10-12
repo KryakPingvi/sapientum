@@ -5,8 +5,11 @@ import type { AccountDirectory, StaffRuntime, StaffTransaction } from './ports.j
 
 /** Internal provisioning operation. Invoke only after tournament creation/ownership authorization. Never expose as a public route. */
 export class AppointFirstAdministrator {
-  constructor(private readonly transactions: StaffTransaction, private readonly accounts: AccountDirectory,
-    private readonly runtime: StaffRuntime) {}
+  constructor(
+    private readonly transactions: StaffTransaction,
+    private readonly accounts: AccountDirectory,
+    private readonly runtime: StaffRuntime,
+  ) {}
 
   execute(input: { tournamentId: string; userId: string; actorId: string }): StaffMemberDto {
     return this.transactions.run(({ members, audit }) => {
@@ -15,13 +18,24 @@ export class AppointFirstAdministrator {
       if (members.countMembers(input.tournamentId) !== 0) {
         throw new StaffError('ALREADY_INITIALIZED', 'The organizing committee is already initialized.');
       }
-      const member = StaffMember.add({ ...input, id: this.runtime.newId(), at: this.runtime.now(),
-        roles: ['administrator', 'organizer'] });
+      const member = StaffMember.add({
+        ...input,
+        id: this.runtime.newId(),
+        at: this.runtime.now(),
+        roles: ['administrator', 'organizer'],
+      });
       members.insert(member);
       const after = member.snapshot();
-      audit.append({ id: this.runtime.newId(), action: 'first-administrator-appointed',
-        tournamentId: input.tournamentId, memberId: after.id, actorId: input.actorId,
-        at: this.runtime.now(), before: null, after });
+      audit.append({
+        id: this.runtime.newId(),
+        action: 'first-administrator-appointed',
+        tournamentId: input.tournamentId,
+        memberId: after.id,
+        actorId: input.actorId,
+        at: this.runtime.now(),
+        before: null,
+        after,
+      });
       return after;
     });
   }

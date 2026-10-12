@@ -4,7 +4,11 @@ import { SqliteStaffStore, StaffService, StaffError } from '../src/modules/staff
 
 const input = workerData as { path: string; actorId: string; memberId: string };
 const store = new SqliteStaffStore(input.path);
-const service = new StaffService(store, { exists: () => true }, { newId: randomUUID, now: () => new Date().toISOString() });
+const service = new StaffService(
+  store,
+  { exists: () => true },
+  { newId: randomUUID, now: () => new Date().toISOString() },
+);
 parentPort!.postMessage('ready');
 parentPort!.once('message', () => {
   try {
@@ -13,5 +17,8 @@ parentPort!.once('message', () => {
   } catch (error) {
     if (!(error instanceof StaffError)) throw error;
     parentPort!.postMessage(error.code);
-  } finally { store.close(); parentPort!.close(); }
+  } finally {
+    store.close();
+    parentPort!.close();
+  }
 });

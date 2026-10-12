@@ -20,7 +20,7 @@ export class StaffAccess {
     requireId(tournamentId);
     requireId(userId);
     const member = this.reader.findByUser(tournamentId, userId);
-    return PERMISSION_ROLES[permission].some(role => member?.hasRole(role) === true);
+    return PERMISSION_ROLES[permission].some((role) => member?.hasRole(role) === true);
   }
 
   require(tournamentId: string, userId: string, permission: StaffPermission): void {

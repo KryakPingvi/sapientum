@@ -8,10 +8,10 @@ export function requireId(value: unknown): asserts value is string {
 }
 
 export function normalizeRoles(value: unknown): readonly StaffRole[] {
-  if (!Array.isArray(value) || value.some(role => !STAFF_ROLES.includes(role))) {
+  if (!Array.isArray(value) || value.some((role) => !STAFF_ROLES.includes(role))) {
     throw new StaffError('INVALID_INPUT', 'Unknown staff role.');
   }
-  return Object.freeze(STAFF_ROLES.filter(role => value.includes(role)));
+  return Object.freeze(STAFF_ROLES.filter((role) => value.includes(role)));
 }
 
 /** Immutable snapshots: changes are made only through domain operations. */
@@ -22,12 +22,26 @@ export class StaffMember {
     this.state = Object.freeze({ ...state, roles: normalizeRoles(state.roles) });
   }
 
-  static add(input: { id: string; tournamentId: string; userId: string; roles: unknown; actorId: string; at: string }): StaffMember {
+  static add(input: {
+    id: string;
+    tournamentId: string;
+    userId: string;
+    roles: unknown;
+    actorId: string;
+    at: string;
+  }): StaffMember {
     for (const id of [input.id, input.tournamentId, input.userId, input.actorId]) requireId(id);
     return new StaffMember({
-      id: input.id, tournamentId: input.tournamentId, userId: input.userId,
-      roles: normalizeRoles(input.roles), status: 'active',
-      addedAt: input.at, addedBy: input.actorId, excludedAt: null, excludedBy: null, version: 1,
+      id: input.id,
+      tournamentId: input.tournamentId,
+      userId: input.userId,
+      roles: normalizeRoles(input.roles),
+      status: 'active',
+      addedAt: input.at,
+      addedBy: input.actorId,
+      excludedAt: null,
+      excludedBy: null,
+      version: 1,
     });
   }
 
@@ -35,7 +49,9 @@ export class StaffMember {
     return new StaffMember(snapshot);
   }
 
-  snapshot(): StaffMemberDto { return this.state; }
+  snapshot(): StaffMemberDto {
+    return this.state;
+  }
 
   hasRole(role: StaffRole): boolean {
     return this.state.status === 'active' && this.state.roles.includes(role);
@@ -50,7 +66,11 @@ export class StaffMember {
     requireId(actorId);
     this.assertEditable(expectedVersion);
     return new StaffMember({
-      ...this.state, status: 'excluded', excludedBy: actorId, excludedAt: at, version: this.state.version + 1,
+      ...this.state,
+      status: 'excluded',
+      excludedBy: actorId,
+      excludedAt: at,
+      version: this.state.version + 1,
     });
   }
 
