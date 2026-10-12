@@ -1,0 +1,19 @@
+{
+  "name": "sapientum",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "npm run build -w @sapientum/contracts && npm run build -w @sapientum/api",
+    "typecheck": "npm run build -w @sapientum/contracts && npm run typecheck -w @sapientum/api",
+    "test": "npm run build && node --test apps/api/dist/tests/staff.test.js"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}

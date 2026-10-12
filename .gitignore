@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+# Build output and caches
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+.vite/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# Runtime data: scans, uploads and local databases
+/data/
+/uploads/
+/storage/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs and temporary files
+logs/
+*.log
+npm-debug.log*
+tmp/
+temp/
+*.tmp
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+
+# Local diagram backups
+*.drawio.bak
+*.drawio.dtmp
