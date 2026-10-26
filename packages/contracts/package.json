@@ -2,14 +2,5 @@
   "name": "@sapientum/contracts",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "exports": {
-    "./staff": {
-      "types": "./dist/staff.d.ts",
-      "import": "./dist/staff.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json"
-  }
+  "type": "module"
 }

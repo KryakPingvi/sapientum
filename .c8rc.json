@@ -7,7 +7,7 @@
     "apps/api/dist/src/**/*.js",
     "packages/contracts/dist/**/*.js"
   ],
-  "exclude": ["**/*.d.ts", "apps/api/src/modules/staff/application/ports.ts"],
+  "exclude": ["**/*.d.ts", "apps/api/src/modules/*/application/ports.ts"],
   "exclude-after-remap": true,
   "reporter": ["text", "html", "lcov", "cobertura", "json-summary"],
   "reports-dir": "coverage"
