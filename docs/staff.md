@@ -16,28 +16,30 @@
 
 ## Границы и зависимости
 
-`domain` содержит неизменяемую модель членства и локальные проверки. `application` зависит от интерфейсов хранилища, транзакций, каталога аккаунтов и источника времени/идентификаторов. `infrastructure` реализует хранение в SQLite. `http` преобразует запросы в вызовы сценариев.
+`domain` содержит неизменяемую модель членства и локальные проверки. `application` зависит от интерфейсов хранилища, транзакций, каталога аккаунтов и источника времени/идентификаторов. `infrastructure` реализует хранение в PostgreSQL. `http` преобразует запросы в вызовы сценариев.
 
-Сценарии синхронные, как и выбранный SQLite-адаптер. `StaffTransaction.run` не допускает асинхронный callback. При переходе к асинхронному хранилищу нужно изменить контракты операций на Promise и обновить сценарии. Для первого модуля это сознательное упрощение; синхронный SQLite не выбран как обязательная БД всего турнира.
-
-`BEGIN IMMEDIATE` получает блокировку записи до чтения прав и подсчёта администраторов. Поэтому два соединения не могут одновременно удалить обоих последних администраторов. Время ожидания блокировки — пять секунд. Конкурентная проверка выполняется двумя worker threads с отдельными соединениями.
+Каждая операция выполняется в одной транзакции PostgreSQL. Изменяющие операции сначала берут блокировку турнира (`pg_advisory_xact_lock`) и только потом читают права и считают администраторов. Поэтому два администратора на разных соединениях не могут одновременно исключить друг друга. Чтение списка блокировку не берёт. Тест останавливает обе транзакции после подсчёта администраторов и без блокировки падает.
 
 ## Подключение
 
-После `npm install` доступны `npm run build`, `npm run typecheck`, `npm test`. Требуется Node.js 22.19+; используемый встроенный `node:sqlite` в Node 22 имеет экспериментальный статус.
+Требуются Node.js 22.19+ и PostgreSQL. Для тестов база поднимается командой `docker compose -f infra/compose.yaml up -d`, адрес задаёт переменная `DATABASE_URL` (пример в `.env.example`). Каждый тест создаёт свою схему и удаляет её после себя.
 
 Пример сборки модуля в серверном коде:
 
 ```ts
 import { randomUUID } from 'node:crypto';
-import { readFileSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { SqliteStaffStore, StaffService, AppointFirstAdministrator, createStaffRoutes } from './modules/staff/index.js';
+import { readFileSync } from 'node:fs';
+import { PostgresDatabase } from './infrastructure/postgres.js';
+import {
+  PostgresStaffStore,
+  StaffService,
+  AppointFirstAdministrator,
+  createStaffRoutes,
+} from './modules/staff/index.js';
 
-// Пути задаёт приложение. Этот пример предполагает запуск из корня репозитория.
-mkdirSync('data', { recursive: true });
-const store = new SqliteStaffStore(resolve('data/staff.sqlite'));
-store.migrate(readFileSync('apps/api/migrations/001-staff.sql', 'utf8'));
+const database = new PostgresDatabase({ connectionString: process.env.DATABASE_URL });
+await database.migrate(readFileSync('apps/api/migrations/001-staff.sql', 'utf8'));
+const store = new PostgresStaffStore(database);
 const runtime = { newId: randomUUID, now: () => new Date().toISOString() };
 
 // accountDirectory — реализация AccountDirectory из модуля аккаунтов.

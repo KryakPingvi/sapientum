@@ -16,15 +16,15 @@ export type StaffPermission = keyof typeof PERMISSION_ROLES;
 export class StaffAccess {
   constructor(private readonly reader: StaffReader) {}
 
-  allows(tournamentId: string, userId: string, permission: StaffPermission): boolean {
+  async allows(tournamentId: string, userId: string, permission: StaffPermission): Promise<boolean> {
     requireId(tournamentId);
     requireId(userId);
-    const member = this.reader.findByUser(tournamentId, userId);
+    const member = await this.reader.findByUser(tournamentId, userId);
     return PERMISSION_ROLES[permission].some((role) => member?.hasRole(role) === true);
   }
 
-  require(tournamentId: string, userId: string, permission: StaffPermission): void {
-    if (!this.allows(tournamentId, userId, permission)) {
+  async require(tournamentId: string, userId: string, permission: StaffPermission): Promise<void> {
+    if (!(await this.allows(tournamentId, userId, permission))) {
       throw new StaffError('FORBIDDEN', 'You do not have permission in this tournament.');
     }
   }

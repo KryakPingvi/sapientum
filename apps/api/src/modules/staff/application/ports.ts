@@ -2,16 +2,17 @@ import type { StaffMemberDto, StaffStatus } from '@sapientum/contracts/staff';
 import type { StaffMember } from '../domain/staff-member.js';
 
 export interface StaffReader {
-  findByUser(tournamentId: string, userId: string): StaffMember | null;
+  findByUser(tournamentId: string, userId: string): Promise<StaffMember | null>;
 }
 
 export interface StaffRepository extends StaffReader {
-  findById(tournamentId: string, memberId: string): StaffMember | null;
-  list(tournamentId: string, status: StaffStatus): readonly StaffMember[];
-  countAdministrators(tournamentId: string): number;
-  countMembers(tournamentId: string): number;
-  insert(member: StaffMember): void;
-  update(member: StaffMember, expectedVersion: number): void;
+  lockTournament(tournamentId: string): Promise<void>;
+  findById(tournamentId: string, memberId: string): Promise<StaffMember | null>;
+  list(tournamentId: string, status: StaffStatus): Promise<readonly StaffMember[]>;
+  countAdministrators(tournamentId: string): Promise<number>;
+  countMembers(tournamentId: string): Promise<number>;
+  insert(member: StaffMember): Promise<void>;
+  update(member: StaffMember, expectedVersion: number): Promise<void>;
 }
 
 export interface StaffAuditEntry {
@@ -26,18 +27,17 @@ export interface StaffAuditEntry {
 }
 
 export interface StaffAuditWriter {
-  append(entry: StaffAuditEntry): void;
+  append(entry: StaffAuditEntry): Promise<void>;
 }
 
 export interface StaffTransaction {
-  /** Repository operations and audit append commit together; callback must be synchronous. */
-  run<T>(operation: (context: { members: StaffRepository; audit: StaffAuditWriter }) => T): T;
+  run<T>(operation: (context: { members: StaffRepository; audit: StaffAuditWriter }) => Promise<T>): Promise<T>;
 }
 
-/** Adapter to the account module; account creation is a separate operation. */
 export interface AccountDirectory {
-  exists(userId: string): boolean;
+  exists(userId: string): Promise<boolean>;
 }
+
 export interface StaffRuntime {
   newId(): string;
   now(): string;

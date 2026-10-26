@@ -35,7 +35,7 @@ const ERROR_STATUS = {
 
 /** Framework-independent HTTP adapter; authentication and JSON parsing belong to the host server. */
 export function createStaffRoutes(service: StaffService) {
-  return (request: StaffHttpRequest): StaffHttpResponse => {
+  return async (request: StaffHttpRequest): Promise<StaffHttpResponse> => {
     if (!request.principal) return { status: 401, body: { code: 'UNAUTHENTICATED' } };
     try {
       const url = new URL(request.url, 'http://localhost');
@@ -46,11 +46,14 @@ export function createStaffRoutes(service: StaffService) {
       const actorId = request.principal.userId;
       if (!memberId && request.method === 'GET') {
         const status = url.searchParams.get('status') ?? 'active';
-        return { status: 200, body: service.list({ actorId, tournamentId, status }) };
+        return { status: 200, body: await service.list({ actorId, tournamentId, status }) };
       }
       if (!memberId && request.method === 'POST') {
         const body = objectBody(request.body);
-        return { status: 201, body: service.add({ actorId, tournamentId, userId: body.userId, roles: body.roles }) };
+        return {
+          status: 201,
+          body: await service.add({ actorId, tournamentId, userId: body.userId, roles: body.roles }),
+        };
       }
       if (
         memberId &&
@@ -60,7 +63,9 @@ export function createStaffRoutes(service: StaffService) {
         const input = { actorId, tournamentId, memberId, expectedVersion: body.expectedVersion };
         return {
           status: 200,
-          body: match[3] === '/roles' ? service.setRoles({ ...input, roles: body.roles }) : service.exclude(input),
+          body: await (match[3] === '/roles'
+            ? service.setRoles({ ...input, roles: body.roles })
+            : service.exclude(input)),
         };
       }
       return { status: 405, body: { code: 'METHOD_NOT_ALLOWED' } };

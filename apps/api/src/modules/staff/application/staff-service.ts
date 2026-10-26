@@ -18,18 +18,19 @@ export class StaffService {
     private readonly runtime: StaffRuntime,
   ) {}
 
-  add(input: { actorId: string; tournamentId: string; userId: unknown; roles: unknown }): StaffMemberDto {
-    return this.transactions.run(({ members, audit }) => {
-      new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
+  add(input: { actorId: string; tournamentId: string; userId: unknown; roles: unknown }): Promise<StaffMemberDto> {
+    return this.transactions.run(async ({ members, audit }) => {
+      await members.lockTournament(input.tournamentId);
+      await new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
       const userId = input.userId;
       requireId(userId);
-      if (!this.accounts.exists(userId)) throw new StaffError('USER_NOT_FOUND', 'Account does not exist.');
-      if (members.findByUser(input.tournamentId, userId)) {
+      if (!(await this.accounts.exists(userId))) throw new StaffError('USER_NOT_FOUND', 'Account does not exist.');
+      if (await members.findByUser(input.tournamentId, userId)) {
         throw new StaffError('DUPLICATE_MEMBER', 'This account already has a membership, possibly excluded.');
       }
       const member = StaffMember.add({ ...input, userId, id: this.runtime.newId(), at: this.runtime.now() });
-      members.insert(member);
-      this.record(audit, 'member-added', input.actorId, null, member);
+      await members.insert(member);
+      await this.record(audit, 'member-added', input.actorId, null, member);
       return member.snapshot();
     });
   }
@@ -40,14 +41,15 @@ export class StaffService {
     memberId: string;
     roles: unknown;
     expectedVersion: unknown;
-  }): StaffMemberDto {
-    return this.transactions.run(({ members, audit }) => {
-      new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
-      const before = this.get(members, input.tournamentId, input.memberId);
+  }): Promise<StaffMemberDto> {
+    return this.transactions.run(async ({ members, audit }) => {
+      await members.lockTournament(input.tournamentId);
+      await new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
+      const before = await this.get(members, input.tournamentId, input.memberId);
       const after = before.setRoles(input.roles, input.expectedVersion);
-      this.protectAdministrator(members, before, after);
-      members.update(after, before.snapshot().version);
-      this.record(audit, 'roles-assigned', input.actorId, before, after);
+      await this.protectAdministrator(members, before, after);
+      await members.update(after, before.snapshot().version);
+      await this.record(audit, 'roles-assigned', input.actorId, before, after);
       return after.snapshot();
     });
   }
@@ -57,40 +59,42 @@ export class StaffService {
     tournamentId: string;
     memberId: string;
     expectedVersion: unknown;
-  }): StaffMemberDto {
-    return this.transactions.run(({ members, audit }) => {
-      new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
-      const before = this.get(members, input.tournamentId, input.memberId);
+  }): Promise<StaffMemberDto> {
+    return this.transactions.run(async ({ members, audit }) => {
+      await members.lockTournament(input.tournamentId);
+      await new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
+      const before = await this.get(members, input.tournamentId, input.memberId);
       const after = before.exclude(input.actorId, this.runtime.now(), input.expectedVersion);
-      this.protectAdministrator(members, before, after);
-      members.update(after, before.snapshot().version);
-      this.record(audit, 'member-excluded', input.actorId, before, after);
+      await this.protectAdministrator(members, before, after);
+      await members.update(after, before.snapshot().version);
+      await this.record(audit, 'member-excluded', input.actorId, before, after);
       return after.snapshot();
     });
   }
 
-  list(input: { actorId: string; tournamentId: string; status: string }): readonly StaffMemberDto[] {
-    return this.transactions.run(({ members }) => {
-      new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
+  list(input: { actorId: string; tournamentId: string; status: string }): Promise<readonly StaffMemberDto[]> {
+    return this.transactions.run(async ({ members }) => {
+      await new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
       if (input.status !== 'active' && input.status !== 'excluded') {
         throw new StaffError('INVALID_INPUT', 'Unknown membership status.');
       }
-      return members.list(input.tournamentId, input.status).map((member) => member.snapshot());
+      const list = await members.list(input.tournamentId, input.status);
+      return list.map((member) => member.snapshot());
     });
   }
 
-  private get(members: StaffRepository, tournamentId: string, memberId: string): StaffMember {
+  private async get(members: StaffRepository, tournamentId: string, memberId: string): Promise<StaffMember> {
     requireId(memberId);
-    const member = members.findById(tournamentId, memberId);
+    const member = await members.findById(tournamentId, memberId);
     if (!member) throw new StaffError('NOT_FOUND', 'Membership does not exist in this tournament.');
     return member;
   }
 
-  private protectAdministrator(members: StaffRepository, before: StaffMember, after: StaffMember): void {
+  private async protectAdministrator(members: StaffRepository, before: StaffMember, after: StaffMember) {
     if (
       before.hasRole('administrator') &&
       !after.hasRole('administrator') &&
-      members.countAdministrators(before.snapshot().tournamentId) <= 1
+      (await members.countAdministrators(before.snapshot().tournamentId)) <= 1
     ) {
       throw new StaffError('LAST_ADMINISTRATOR', 'The tournament must retain an active administrator.');
     }
@@ -102,9 +106,9 @@ export class StaffService {
     actorId: string,
     before: StaffMember | null,
     after: StaffMember,
-  ): void {
+  ): Promise<void> {
     const snapshot = after.snapshot();
-    audit.append({
+    return audit.append({
       id: this.runtime.newId(),
       action,
       actorId,
