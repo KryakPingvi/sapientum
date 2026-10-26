@@ -321,3 +321,80 @@ test('concurrent exclusions through independent connections retain one administr
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('HTTP adapter rejects malformed requests and unknown routes', () => {
+  const { store, service, admin } = fixture();
+  try {
+    const route = createStaffRoutes(service);
+    const principal = { userId: 'admin' };
+    const post = (url: string, body: unknown) => route({ method: 'POST', url, body, principal }).status;
+    for (const body of [undefined, null, [], 'alice']) assert.equal(post('/tournaments/t1/staff', body), 400);
+    for (const userId of [undefined, 42, '', '   ', 'x'.repeat(201)]) {
+      assert.equal(post('/tournaments/t1/staff', { userId, roles: [] }), 400);
+    }
+    for (const expectedVersion of [undefined, '1', 1.5, 0]) {
+      assert.equal(post(`/tournaments/t1/staff/${admin.id}/exclude`, { expectedVersion }), 400);
+    }
+    const listed = route({ method: 'GET', url: '/tournaments/t1/staff', principal });
+    assert.deepEqual(listed, { status: 200, body: [admin] });
+    assert.equal(route({ method: 'GET', url: '/tournaments/t1/teams', principal }).status, 404);
+    assert.equal(route({ method: 'GET', url: `/tournaments/t1/staff/${admin.id}`, principal }).status, 405);
+    assert.equal(route({ method: 'PUT', url: `/tournaments/t1/staff/${admin.id}/exclude`, principal }).status, 405);
+    assert.equal(route({ method: 'DELETE', url: '/tournaments/t1/staff', principal }).status, 405);
+  } finally {
+    store.close();
+  }
+});
+
+test('HTTP adapter passes unexpected storage errors to the host server', () => {
+  const { store, service } = fixture();
+  store.close();
+  const route = createStaffRoutes(service);
+  assert.throws(() => route({ method: 'GET', url: '/tournaments/t1/staff', principal: { userId: 'admin' } }));
+});
+
+test('an excluded member reports the exclusion even for a stale version', () => {
+  const { store, service } = fixture();
+  try {
+    const alice = service.add({ actorId: 'admin', tournamentId: 't1', userId: 'alice', roles: ['jury'] });
+    service.exclude({ actorId: 'admin', tournamentId: 't1', memberId: alice.id, expectedVersion: 1 });
+    assert.throws(
+      () =>
+        service.setRoles({ actorId: 'admin', tournamentId: 't1', memberId: alice.id, roles: [], expectedVersion: 1 }),
+      isError('MEMBER_EXCLUDED'),
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test('the first administrator must have an account', () => {
+  const { store, bootstrap } = fixture();
+  try {
+    assert.throws(
+      () => bootstrap.execute({ tournamentId: 't2', userId: 'missing', actorId: 'owner' }),
+      isError('USER_NOT_FOUND'),
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test('the store rejects nested and asynchronous transactions and stale writes', () => {
+  const { store, service } = fixture();
+  try {
+    assert.throws(() => store.run(() => store.run(() => 1)), /Nested/);
+    assert.throws(() => store.run(async () => 1), /synchronous/);
+    assert.throws(
+      () =>
+        store.run(({ members }) => {
+          const admin = members.findByUser('t1', 'admin')!;
+          members.update(admin, 99);
+        }),
+      isError('VERSION_CONFLICT'),
+    );
+    assert.equal(service.list({ actorId: 'admin', tournamentId: 't1', status: 'active' })[0]?.version, 1);
+  } finally {
+    store.close();
+  }
+});

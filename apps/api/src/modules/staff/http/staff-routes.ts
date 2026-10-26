@@ -46,12 +46,10 @@ export function createStaffRoutes(service: StaffService) {
       const actorId = request.principal.userId;
       if (!memberId && request.method === 'GET') {
         const status = url.searchParams.get('status') ?? 'active';
-        if (status !== 'active' && status !== 'excluded') throw new StaffError('INVALID_INPUT', 'Unknown status.');
         return { status: 200, body: service.list({ actorId, tournamentId, status }) };
       }
       if (!memberId && request.method === 'POST') {
         const body = objectBody(request.body);
-        if (typeof body.userId !== 'string') throw new StaffError('INVALID_INPUT', 'userId is required.');
         return { status: 201, body: service.add({ actorId, tournamentId, userId: body.userId, roles: body.roles }) };
       }
       if (
@@ -59,13 +57,6 @@ export function createStaffRoutes(service: StaffService) {
         ((match[3] === '/roles' && request.method === 'PUT') || (match[3] === '/exclude' && request.method === 'POST'))
       ) {
         const body = objectBody(request.body);
-        if (
-          typeof body.expectedVersion !== 'number' ||
-          !Number.isInteger(body.expectedVersion) ||
-          body.expectedVersion < 1
-        ) {
-          throw new StaffError('INVALID_INPUT', 'expectedVersion must be a positive integer.');
-        }
         const input = { actorId, tournamentId, memberId, expectedVersion: body.expectedVersion };
         return {
           status: 200,

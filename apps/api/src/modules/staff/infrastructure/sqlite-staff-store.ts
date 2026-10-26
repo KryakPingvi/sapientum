@@ -139,19 +139,20 @@ export class SqliteStaffStore implements StaffTransaction {
     if (this.running) throw new Error('Nested staff transactions are not supported.');
     this.db.exec('BEGIN IMMEDIATE');
     this.running = true;
+    let result: T;
     try {
-      const result = operation({ members: new SqliteStaffRepository(this.db), audit: new SqliteStaffAudit(this.db) });
+      result = operation({ members: new SqliteStaffRepository(this.db), audit: new SqliteStaffAudit(this.db) });
       if (result && typeof (result as { then?: unknown }).then === 'function') {
         throw new Error('Staff transaction callbacks must be synchronous.');
       }
       this.db.exec('COMMIT');
-      return result;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     } finally {
       this.running = false;
     }
+    return result;
   }
 
   close(): void {

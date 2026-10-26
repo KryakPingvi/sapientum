@@ -1,4 +1,4 @@
-import type { StaffMemberDto, StaffStatus } from '@sapientum/contracts/staff';
+import type { StaffMemberDto } from '@sapientum/contracts/staff';
 import { StaffError } from '../domain/staff-error.js';
 import { StaffMember, requireId } from '../domain/staff-member.js';
 import { StaffAccess } from './staff-access.js';
@@ -18,15 +18,16 @@ export class StaffService {
     private readonly runtime: StaffRuntime,
   ) {}
 
-  add(input: { actorId: string; tournamentId: string; userId: string; roles: unknown }): StaffMemberDto {
+  add(input: { actorId: string; tournamentId: string; userId: unknown; roles: unknown }): StaffMemberDto {
     return this.transactions.run(({ members, audit }) => {
       new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
-      requireId(input.userId);
-      if (!this.accounts.exists(input.userId)) throw new StaffError('USER_NOT_FOUND', 'Account does not exist.');
-      if (members.findByUser(input.tournamentId, input.userId)) {
+      const userId = input.userId;
+      requireId(userId);
+      if (!this.accounts.exists(userId)) throw new StaffError('USER_NOT_FOUND', 'Account does not exist.');
+      if (members.findByUser(input.tournamentId, userId)) {
         throw new StaffError('DUPLICATE_MEMBER', 'This account already has a membership, possibly excluded.');
       }
-      const member = StaffMember.add({ ...input, id: this.runtime.newId(), at: this.runtime.now() });
+      const member = StaffMember.add({ ...input, userId, id: this.runtime.newId(), at: this.runtime.now() });
       members.insert(member);
       this.record(audit, 'member-added', input.actorId, null, member);
       return member.snapshot();
@@ -38,32 +39,37 @@ export class StaffService {
     tournamentId: string;
     memberId: string;
     roles: unknown;
-    expectedVersion: number;
+    expectedVersion: unknown;
   }): StaffMemberDto {
     return this.transactions.run(({ members, audit }) => {
       new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
       const before = this.get(members, input.tournamentId, input.memberId);
       const after = before.setRoles(input.roles, input.expectedVersion);
       this.protectAdministrator(members, before, after);
-      members.update(after, input.expectedVersion);
+      members.update(after, before.snapshot().version);
       this.record(audit, 'roles-assigned', input.actorId, before, after);
       return after.snapshot();
     });
   }
 
-  exclude(input: { actorId: string; tournamentId: string; memberId: string; expectedVersion: number }): StaffMemberDto {
+  exclude(input: {
+    actorId: string;
+    tournamentId: string;
+    memberId: string;
+    expectedVersion: unknown;
+  }): StaffMemberDto {
     return this.transactions.run(({ members, audit }) => {
       new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
       const before = this.get(members, input.tournamentId, input.memberId);
       const after = before.exclude(input.actorId, this.runtime.now(), input.expectedVersion);
       this.protectAdministrator(members, before, after);
-      members.update(after, input.expectedVersion);
+      members.update(after, before.snapshot().version);
       this.record(audit, 'member-excluded', input.actorId, before, after);
       return after.snapshot();
     });
   }
 
-  list(input: { actorId: string; tournamentId: string; status: StaffStatus }): readonly StaffMemberDto[] {
+  list(input: { actorId: string; tournamentId: string; status: string }): readonly StaffMemberDto[] {
     return this.transactions.run(({ members }) => {
       new StaffAccess(members).require(input.tournamentId, input.actorId, 'staff.manage');
       if (input.status !== 'active' && input.status !== 'excluded') {

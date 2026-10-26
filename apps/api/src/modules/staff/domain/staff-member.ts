@@ -57,12 +57,12 @@ export class StaffMember {
     return this.state.status === 'active' && this.state.roles.includes(role);
   }
 
-  setRoles(roles: unknown, expectedVersion: number): StaffMember {
+  setRoles(roles: unknown, expectedVersion: unknown): StaffMember {
     this.assertEditable(expectedVersion);
     return new StaffMember({ ...this.state, roles: normalizeRoles(roles), version: this.state.version + 1 });
   }
 
-  exclude(actorId: string, at: string, expectedVersion: number): StaffMember {
+  exclude(actorId: string, at: string, expectedVersion: unknown): StaffMember {
     requireId(actorId);
     this.assertEditable(expectedVersion);
     return new StaffMember({
@@ -74,15 +74,15 @@ export class StaffMember {
     });
   }
 
-  private assertEditable(expectedVersion: number): void {
-    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+  private assertEditable(expectedVersion: unknown): void {
+    if (typeof expectedVersion !== 'number' || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
       throw new StaffError('INVALID_INPUT', 'expectedVersion must be a positive integer.');
-    }
-    if (this.state.version !== expectedVersion) {
-      throw new StaffError('VERSION_CONFLICT', 'Membership has changed; reload it before editing.');
     }
     if (this.state.status === 'excluded') {
       throw new StaffError('MEMBER_EXCLUDED', 'Excluded membership cannot be modified.');
+    }
+    if (this.state.version !== expectedVersion) {
+      throw new StaffError('VERSION_CONFLICT', 'Membership has changed; reload it before editing.');
     }
   }
 }
