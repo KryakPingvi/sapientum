@@ -1,11 +1,13 @@
 # CI
 
 GitHub Actions runs on pull requests, pushes to `main`, and manual dispatches.
-It uses Node.js 22.19.0 and installs the locked dependencies with `npm ci`.
+It uses Node.js 22.19.0, installs the locked dependencies with `npm ci` and starts a
+PostgreSQL 16 service for the tests. `DATABASE_URL` points the tests at it.
 
 Run the same checks locally:
 
 ```sh
+docker compose -f infra/compose.yaml up -d
 npm ci
 npm run format:check
 npm run typecheck
