@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sapientum/contracts": "0.1.0",
+    "jose": "6.2.16",
     "pg": "^8.23.1"
   }
 }
