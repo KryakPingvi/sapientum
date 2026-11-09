@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./sessions": {
+      "types": "./dist/sessions.d.ts",
+      "import": "./dist/sessions.js"
+    },
+    "./teams": {
+      "types": "./dist/teams.d.ts",
+      "import": "./dist/teams.js"
+    },
     "./staff": {
       "types": "./dist/staff.d.ts",
       "import": "./dist/staff.js"
