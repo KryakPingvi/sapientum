@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./teams": {
+      "types": "./dist/teams.d.ts",
+      "import": "./dist/teams.js"
+    },
     "./staff": {
       "types": "./dist/staff.d.ts",
       "import": "./dist/staff.js"

@@ -3,6 +3,19 @@ import type { PostgresDatabase, SqlClient } from '../../../infrastructure/postgr
 import { StaffMember } from '../domain/staff-member.js';
 import { StaffError } from '../domain/staff-error.js';
 import type { StaffAuditEntry, StaffAuditWriter, StaffRepository, StaffTransaction } from '../application/ports.js';
+import { StaffAccess, type StaffPermission } from '../application/staff-access.js';
+
+/** Checks permission on the caller's transaction and holds the membership lock until commit. */
+export async function requirePostgresStaffPermission(
+  sql: SqlClient,
+  tournamentId: string,
+  userId: string,
+  permission: StaffPermission,
+): Promise<void> {
+  const members = new PostgresStaffRepository(sql);
+  await members.lockTournament(tournamentId);
+  await new StaffAccess(members).require(tournamentId, userId, permission);
+}
 
 interface MemberRow {
   id: string;
