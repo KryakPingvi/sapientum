@@ -174,8 +174,11 @@
       csrf = data.csrf;
       $('registration').textContent = data.registrationOpen ? 'Регистрация открыта' : 'Регистрация закрыта';
     }
-    async function teamList() {
-      const teams = await call('/tournaments/demo/teams?status=' + $('filter').value);
+    async function teamList(after = null) {
+      const page = await call(
+        '/tournaments/demo/teams?status=' + $('filter').value + (after ? '&after=' + encodeURIComponent(after) : ''),
+      );
+      const teams = page.items;
       $('teams').replaceChildren();
       for (const team of teams) {
         const element = row($('teams'), `${team.name} · ${team.organization} · ${team.status}`);
@@ -186,6 +189,7 @@
           });
       }
       if (!teams.length) $('teams').textContent = 'Команд пока нет.';
+      if (page.nextCursor) button($('teams'), 'Следующая страница', () => teamList(page.nextCursor));
     }
     $('login').onsubmit = run(async () => {
       const data = await call('/auth/login', 'POST', {

@@ -8,6 +8,10 @@
   "scripts": {
     "dev": "npm run build && node scripts/dev-server.mjs",
     "dev:check": "node scripts/dev-check.mjs",
+    "dev:auth": "node scripts/dev-service.mjs auth",
+    "dev:tournament": "node scripts/dev-service.mjs tournament",
+    "dev:process-check": "node scripts/process-check.mjs",
+    "dev:load": "node scripts/load-tournament.mjs",
     "build": "node scripts/clean-build.mjs && npm run build -w @sapientum/contracts --if-present && npm run build -w @sapientum/api --if-present",
     "typecheck": "npm run build -w @sapientum/contracts --if-present && npm run typecheck -w @sapientum/api --if-present",
     "test": "npm run build && node --test apps/api/dist/tests/*.test.js",

@@ -59,6 +59,12 @@ jobs:
       - name: Test with coverage
         run: npm run test:coverage
 
+      - name: Start isolated service databases
+        run: docker compose -p sapientum-demo -f infra/compose.dev.yaml up -d --wait
+
+      - name: Check separate processes, failures and replicas
+        run: npm run dev:process-check
+
       - name: Generate coverage summary
         if: ${{ !cancelled() && hashFiles('coverage/lcov.info') != '' }}
         run: node scripts/coverage-summary.mjs
