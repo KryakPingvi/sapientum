@@ -1,4 +1,4 @@
-import { TEAM_FILTERS, type TeamDto } from '@sapientum/contracts/teams';
+import { TEAM_FILTERS, type TeamDto, type PublicTeamPage } from '@sapientum/contracts/teams';
 import { TeamError } from '../domain/team-error.js';
 import { Team, requireTeamId } from '../domain/team.js';
 import type { TeamContext, TeamRuntime, TeamTransaction } from './ports.js';
@@ -43,14 +43,37 @@ export class TeamService {
     });
   }
 
-  list(input: { tournamentId: string; status: string }): Promise<readonly TeamDto[]> {
+  async listPublic(input: {
+    tournamentId: string;
+    status: string;
+    limit: string | null;
+    after: string | null;
+  }): Promise<PublicTeamPage> {
+    const limit = input.limit === null ? 50 : Number(input.limit);
+    if ((input.limit !== null && !/^[1-9]\d{0,2}$/.test(input.limit)) || limit > 100) {
+      throw new TeamError('INVALID_INPUT', 'limit must be an integer from 1 to 100.');
+    }
+    if (input.after !== null) requireTeamId(input.after);
+    const rows = await this.list(input, limit + 1, input.after);
+    const items = rows
+      .slice(0, limit)
+      .map(({ id, name, organization, status }) => ({ id, name, organization, status }));
+    return { items, nextCursor: rows.length > limit ? items[items.length - 1]!.id : null };
+  }
+
+  /** Internal snapshots, bounded to 100 by default. Never expose directly through public HTTP. */
+  list(
+    input: { tournamentId: string; status: string },
+    limit = 100,
+    after: string | null = null,
+  ): Promise<readonly TeamDto[]> {
     return this.transactions.run(async (context) => {
       const status = TEAM_FILTERS.find((value) => value === input.status);
       if (!status) {
         throw new TeamError('INVALID_INPUT', 'Unknown team status.');
       }
       await this.registration(context, input.tournamentId);
-      return (await context.teams.list(input.tournamentId, status)).map((team) => team.snapshot());
+      return (await context.teams.list(input.tournamentId, status, limit, after)).map((team) => team.snapshot());
     });
   }
 

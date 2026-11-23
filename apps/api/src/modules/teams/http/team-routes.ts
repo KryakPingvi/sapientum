@@ -36,7 +36,12 @@ export function createTeamRoutes(service: TeamService) {
       if (!teamId && request.method === 'GET') {
         return {
           status: 200,
-          body: await service.list({ tournamentId, status: url.searchParams.get('status') ?? 'all' }),
+          body: await service.listPublic({
+            tournamentId,
+            status: url.searchParams.get('status') ?? 'all',
+            limit: url.searchParams.get('limit'),
+            after: url.searchParams.get('after'),
+          }),
         };
       }
       if (request.method !== 'POST') return { status: 405, body: { code: 'METHOD_NOT_ALLOWED' } };

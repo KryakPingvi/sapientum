@@ -1,5 +1,10 @@
 {
   "all": true,
+  "check-coverage": true,
+  "lines": 100,
+  "branches": 100,
+  "functions": 100,
+  "statements": 100,
   "src": ["apps/api/dist/src", "packages/contracts/dist"],
   "include": [
     "apps/api/src/**/*.ts",
