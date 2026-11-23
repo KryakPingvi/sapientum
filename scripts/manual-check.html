@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ru">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sapientum — ручная проверка</title>
+  <style>
+    body {
+      max-width: 960px;
+      margin: 32px auto;
+      padding: 0 20px;
+      font: 16px/1.5 system-ui;
+      color: #18202b;
+      background: #f4f6f8;
+    }
+    section {
+      background: white;
+      padding: 20px;
+      border: 1px solid #dae0e8;
+      border-radius: 12px;
+      margin: 16px 0;
+    }
+    input,
+    select,
+    button {
+      font: inherit;
+      padding: 8px 12px;
+      margin: 4px;
+      max-width: 100%;
+    }
+    button {
+      cursor: pointer;
+    }
+    label {
+      display: inline-block;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .row {
+      padding: 12px 0;
+      border-top: 1px solid #ddd;
+    }
+    #log {
+      max-height: 250px;
+      overflow: auto;
+    }
+    .hint {
+      color: #526070;
+    }
+  </style>
+  <h1>Sapientum — ручная проверка</h1>
+  <p>
+    Локальный стенд. Турнир «Демо». Открой второе окно инкогнито, чтобы проверить другое устройство или аккаунт
+    одновременно.
+  </p>
+  <section>
+    <h2>1. Вход</h2>
+    <p class="hint">
+      organizer — администратор и организатор; leader — руководитель команды; jury — жюри. Пароль для всех: demo12345.
+    </p>
+    <form id="login">
+      <label
+        >Аккаунт
+        <select id="account">
+          <option>organizer</option>
+          <option>leader</option>
+          <option>jury</option>
+        </select></label
+      ><input id="password" type="password" value="demo12345" autocomplete="current-password" /><input
+        id="device"
+        value="Мой компьютер"
+        aria-label="Название устройства"
+      /><button>Войти</button>
+    </form>
+    <p id="identity">Без входа</p>
+    <button id="refresh">Обновить токен</button><button id="logout">Выйти на всех устройствах</button>
+  </section>
+  <section>
+    <h2>2. Заявка команды</h2>
+    <form id="submit">
+      <input id="team" placeholder="Название команды" required /><input
+        id="organization"
+        placeholder="Организация"
+        required
+      /><input id="leader" placeholder="ФИО руководителя" required /><button>Подать заявку</button>
+    </form>
+    <p class="hint">Попробуй подать под leader. Подтверждение доступно только organizer.</p>
+  </section>
+  <section>
+    <h2>3. Команды турнира</h2>
+    <select id="filter">
+      <option value="all">Все</option>
+      <option value="pending">Неподтверждённые</option>
+      <option value="confirmed">Подтверждённые</option></select
+    ><button id="load-teams">Обновить список</button>
+    <div id="teams"></div>
+  </section>
+  <section>
+    <h2>4. Регистрация турнира</h2>
+    <p id="registration"></p>
+    <button id="open">Открыть регистрацию</button><button id="close">Закрыть регистрацию</button>
+    <p class="hint">
+      Организатор может закрыть регистрацию. После этого новая заявка должна получить REGISTRATION_CLOSED.
+    </p>
+  </section>
+  <section>
+    <h2>5. Оргкомитет и права</h2>
+    <button id="load-staff">Загрузить оргкомитет</button>
+    <div id="staff"></div>
+    <p class="hint">
+      Сними organizer у организатора, оставив administrator: подтверждение команд начнёт отвечать 403. Затем верни
+      organizer. Последнего администратора удалить нельзя.
+    </p>
+  </section>
+  <section>
+    <h2>6. Мои сессии</h2>
+    <button id="load-sessions">Показать устройства</button>
+    <div id="sessions"></div>
+    <p class="hint">
+      Войди тем же аккаунтом в инкогнито и закрой его сессию отсюда. Следующий защищённый запрос там получит 401.
+    </p>
+  </section>
+  <section>
+    <h2>Результат последнего действия</h2>
+    <pre id="log">Готово к проверке.</pre>
+  </section>
+  <script>
+    let token = '',
+      csrf = '';
+    const $ = (id) => document.getElementById(id);
+    const show = (value) => ($('log').textContent = JSON.stringify(value, null, 2));
+    async function call(path, method = 'GET', body) {
+      const headers = { 'X-CSRF-Token': csrf };
+      if (token) headers.Authorization = 'Bearer ' + token;
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      const response = await fetch(path, {
+        method,
+        headers,
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      const data = response.status === 204 ? null : await response.json();
+      show({ status: response.status, data });
+      if (!response.ok) throw new Error(data?.code || String(response.status));
+      return data;
+    }
+    function run(fn) {
+      return async (event) => {
+        event?.preventDefault();
+        try {
+          await fn();
+        } catch (error) {
+          $('log').textContent += '\n' + error.message;
+        }
+      };
+    }
+    function row(parent, label) {
+      const element = document.createElement('div');
+      element.className = 'row';
+      const text = document.createElement('span');
+      text.textContent = label;
+      element.append(text);
+      parent.append(element);
+      return element;
+    }
+    function button(parent, title, action) {
+      const b = document.createElement('button');
+      b.textContent = title;
+      b.onclick = run(action);
+      parent.append(b);
+    }
+    async function context() {
+      const data = await call('/dev/context');
+      csrf = data.csrf;
+      $('registration').textContent = data.registrationOpen ? 'Регистрация открыта' : 'Регистрация закрыта';
+    }
+    async function teamList() {
+      const teams = await call('/tournaments/demo/teams?status=' + $('filter').value);
+      $('teams').replaceChildren();
+      for (const team of teams) {
+        const element = row($('teams'), `${team.name} · ${team.organization} · ${team.status}`);
+        if (team.status === 'pending')
+          button(element, 'Подтвердить', async () => {
+            await call(`/tournaments/demo/teams/${team.id}/confirm`, 'POST');
+            await teamList();
+          });
+      }
+      if (!teams.length) $('teams').textContent = 'Команд пока нет.';
+    }
+    $('login').onsubmit = run(async () => {
+      const data = await call('/auth/login', 'POST', {
+        login: $('account').value,
+        password: $('password').value,
+        deviceLabel: $('device').value,
+      });
+      token = data.accessToken;
+      $('identity').textContent = `Вход: ${$('account').value}. Сессия: ${data.sessionId}`;
+    });
+    $('refresh').onclick = run(async () => {
+      const data = await call('/auth/refresh', 'POST');
+      token = data.accessToken;
+      $('identity').textContent = 'Сессия восстановлена: ' + data.sessionId;
+    });
+    $('logout').onclick = run(async () => {
+      await call('/auth/sessions', 'DELETE');
+      token = '';
+      $('identity').textContent = 'Все сессии закрыты';
+    });
+    $('submit').onsubmit = run(async () => {
+      await call('/tournaments/demo/teams', 'POST', {
+        name: $('team').value,
+        organization: $('organization').value,
+        leaderName: $('leader').value,
+      });
+      await teamList();
+    });
+    $('load-teams').onclick = run(teamList);
+    $('filter').onchange = run(teamList);
+    for (const id of ['open', 'close'])
+      $(id).onclick = run(async () => {
+        await call('/dev/registration', 'POST', { open: id === 'open' });
+        await context();
+      });
+    async function staffList() {
+      const members = await call('/tournaments/demo/staff');
+      $('staff').replaceChildren();
+      for (const member of members) {
+        const element = row($('staff'), member.userId);
+        const roles = [];
+        for (const role of ['administrator', 'organizer', 'jury', 'author', 'representative']) {
+          const label = document.createElement('label'),
+            box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = member.roles.includes(role);
+          label.append(box, document.createTextNode(role));
+          element.append(label);
+          roles.push([role, box]);
+        }
+        button(element, 'Сохранить роли', async () => {
+          await call(`/tournaments/demo/staff/${member.id}/roles`, 'PUT', {
+            roles: roles.filter(([, box]) => box.checked).map(([role]) => role),
+            expectedVersion: member.version,
+          });
+          await staffList();
+        });
+        button(element, 'Исключить', async () => {
+          await call(`/tournaments/demo/staff/${member.id}/exclude`, 'POST', { expectedVersion: member.version });
+          await staffList();
+        });
+      }
+    }
+    $('load-staff').onclick = run(staffList);
+    async function sessionList() {
+      const sessions = await call('/auth/sessions');
+      $('sessions').replaceChildren();
+      for (const session of sessions) {
+        const element = row(
+          $('sessions'),
+          `${session.deviceLabel} · ${session.state}${session.current ? ' · текущая' : ''} · ${session.lastSeenAt}`,
+        );
+        if (session.state === 'active')
+          button(element, 'Закрыть', async () => {
+            await call('/auth/sessions/' + session.id, 'DELETE');
+            if (session.current) {
+              token = '';
+              $('identity').textContent = 'Текущая сессия закрыта';
+            } else await sessionList();
+          });
+      }
+    }
+    $('load-sessions').onclick = run(sessionList);
+    run(async () => {
+      await context();
+      await teamList();
+    })();
+  </script>
+</html>

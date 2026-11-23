@@ -6,6 +6,8 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "dev": "npm run build && node scripts/dev-server.mjs",
+    "dev:check": "node scripts/dev-check.mjs",
     "build": "npm run build -w @sapientum/contracts --if-present && npm run build -w @sapientum/api --if-present",
     "typecheck": "npm run build -w @sapientum/contracts --if-present && npm run typecheck -w @sapientum/api --if-present",
     "test": "npm run build && node --test apps/api/dist/tests/*.test.js",
