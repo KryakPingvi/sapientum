@@ -22,7 +22,10 @@ export interface SessionRepository {
   insert(session: SessionRecord): Promise<void>;
   /** Holds the session row lock until transaction completion. */
   find(id: string, userId: string): Promise<SessionRecord | null>;
-  list(userId: string): Promise<readonly SessionRecord[]>;
+  list(userId: string, limit?: number, after?: string | null): Promise<readonly SessionRecord[]>;
+  countActive(userId: string, now: string): Promise<number>;
+  countRefresh(sessionId: string): Promise<number>;
+  purgeEnded(cutoff: string, limit: number): Promise<number>;
   touch(session: SessionRecord): Promise<void>;
   revoke(id: string, at: string): Promise<void>;
   revokeAll(userId: string, at: string): Promise<void>;

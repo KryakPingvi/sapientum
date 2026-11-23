@@ -1,4 +1,5 @@
-export { SessionService } from './application/session-service.js';
+export { SessionService, DEFAULT_SESSION_LIMITS } from './application/session-service.js';
+export type { SessionLimits } from './application/session-service.js';
 export type { SessionGrant } from './application/session-service.js';
 export type {
   AccountCredentials,

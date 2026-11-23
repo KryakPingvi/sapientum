@@ -3,15 +3,17 @@ import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
+import { request as httpRequest } from 'node:http';
 const env = {
   ...process.env,
   DEMO_SERVICE_KEY: randomBytes(32).toString('hex'),
   DEMO_JWT_KEY_BASE64: randomBytes(32).toString('base64'),
+  DEMO_POOL_MAX: '1',
 };
 const children = [];
-function start(role, port) {
+function start(role, port, overrides = {}) {
   const child = spawn(process.execPath, ['scripts/dev-service.mjs', role], {
-    env: { ...env, DEMO_PORT: String(port) },
+    env: { ...env, ...overrides, DEMO_PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -87,7 +89,79 @@ try {
   });
   assert.equal(login.status, 200);
   adminToken = login.body.accessToken;
+  const oldChecks = (await call(0, '/auth/sessions?limit=100', 'GET', undefined, adminToken)).body.items;
+  for (const session of oldChecks)
+    if (session.state === 'active' && session.deviceLabel === 'Load check')
+      await call(0, '/auth/sessions/' + session.id, 'DELETE', undefined, adminToken);
   assert.equal((await call(1, '/dev/registration', 'POST', { open: true }, adminToken)).status, 200);
+  const poolResults = await Promise.all(
+    Array.from({ length: 8 }, (_, index) =>
+      call(index % 2, '/tournaments/demo/staff', 'POST', { userId: 'leader', roles: ['jury'] }, adminToken),
+    ),
+  );
+  assert.ok(
+    poolResults.every((result) => [201, 409].includes(result.status)),
+    'One-connection pools must not deadlock on the account directory',
+  );
+  const unicode = { name: 'Ёжики 🦔 ' + randomUUID(), organization: 'Школа №1', leaderName: 'Иван Иванов' };
+  const bytes = Buffer.from(JSON.stringify(unicode));
+  const fragmented = await new Promise((resolve, reject) => {
+    const req = httpRequest(
+      origins[0] + '/tournaments/demo/teams',
+      {
+        method: 'POST',
+        headers: {
+          Origin: origins[0],
+          'X-CSRF-Token': contexts[0].csrf,
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + adminToken,
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          raw += chunk;
+        });
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(raw) }));
+      },
+    );
+    req.on('error', reject);
+    (async () => {
+      for (const byte of bytes) {
+        req.write(Buffer.from([byte]));
+        await delay(1);
+      }
+      req.end();
+    })().catch(reject);
+  });
+  assert.equal(fragmented.status, 201);
+  for (const key of ['name', 'organization', 'leaderName']) assert.equal(fragmented.body[key], unicode[key]);
+  const badLogin = 'wrong-' + randomUUID();
+  const attempts = [];
+  for (let i = 0; i < 11; i++)
+    attempts.push(
+      (
+        await call(0, '/auth/login?check=rate-limit', 'POST', {
+          login: badLogin,
+          password: 'wrong',
+          deviceLabel: 'Throttle check',
+        })
+      ).status,
+    );
+  assert.deepEqual(attempts.slice(0, 10), Array(10).fill(401));
+  assert.equal(attempts[10], 429);
+  const saturated = await Promise.all(
+    Array.from({ length: 12 }, () =>
+      call(0, '/auth/login', 'POST', {
+        login: 'parallel-' + randomUUID(),
+        password: 'wrong',
+        deviceLabel: 'Parallel throttle',
+      }),
+    ),
+  );
+  assert.ok(saturated.some((r) => r.status === 429));
+  assert.ok(saturated.every((r) => [401, 429].includes(r.status)));
   const created = await call(
     0,
     '/tournaments/demo/teams',
@@ -156,7 +230,7 @@ try {
   await stop(auth.child);
   assert.equal((await call(1, '/tournaments/demo/teams')).status, 200);
   assert.equal((await call(0, '/auth/sessions', 'GET', undefined, adminToken)).status, 503);
-  auth = start('auth', 3001);
+  auth = start('auth', 3001, { DEMO_POOL_MAX: '10' });
   await ready(auth, 'http://127.0.0.1:3001/internal/account', authOptions);
   assert.equal((await call(1, '/auth/sessions', 'GET', undefined, adminToken)).status, 200);
   assert.equal((await call(0, `/auth/sessions/${login.body.sessionId}`, 'DELETE', undefined, adminToken)).status, 204);
@@ -171,7 +245,7 @@ try {
   );
   for (const urls of [origins.slice(0, 1), origins]) {
     const load = spawn(process.execPath, ['scripts/load-tournament.mjs'], {
-      env: { ...process.env, LOAD_URLS: urls.join(',') },
+      env: { ...env, LOAD_URLS: urls.join(',') },
       stdio: 'inherit',
     });
     const code = await new Promise((resolve) => load.once('exit', resolve));

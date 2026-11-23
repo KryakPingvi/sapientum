@@ -43,7 +43,8 @@ export function createSessionRoutes(service: SessionService) {
       };
     };
     try {
-      const path = new URL(request.url, 'http://localhost').pathname;
+      const url = new URL(request.url, 'http://localhost');
+      const path = url.pathname;
       const match = /^\/auth\/(login|refresh|sessions)(?:\/([^/]+))?$/.exec(path);
       if (!match || (match[2] && match[1] !== 'sessions')) return response(404, { code: 'NOT_FOUND' });
       const action = match[1];
@@ -69,14 +70,21 @@ export function createSessionRoutes(service: SessionService) {
         );
       }
       if (action === 'refresh') return granted(await service.refresh(request.refreshToken));
-      if (readable) return response(200, await service.list(request.accessToken));
+      if (readable)
+        return response(
+          200,
+          await service.listPublic(request.accessToken, url.searchParams.get('limit'), url.searchParams.get('after')),
+        );
       const currentRevoked = await service.revoke(request.accessToken, id);
       return { ...response(204, null), ...(currentRevoked ? { refreshCookie: null } : {}) };
     } catch (error) {
       if (error instanceof SessionError)
-        return response(({ INVALID_INPUT: 400, UNAUTHENTICATED: 401, NOT_FOUND: 404 } as const)[error.code], {
-          code: error.code,
-        });
+        return response(
+          ({ INVALID_INPUT: 400, UNAUTHENTICATED: 401, NOT_FOUND: 404, SESSION_LIMIT: 429 } as const)[error.code],
+          {
+            code: error.code,
+          },
+        );
       if (error instanceof URIError) return response(400, { code: 'INVALID_INPUT' });
       throw error;
     }

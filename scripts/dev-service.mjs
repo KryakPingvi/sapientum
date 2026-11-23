@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { passwordDigest, loginGuard, readJson } from './dev-security.mjs';
 import { readFile } from 'node:fs/promises';
 
 import { PostgresDatabase } from '../apps/api/dist/src/infrastructure/postgres.js';
@@ -29,6 +30,8 @@ if (![3000, 3001, 3002].includes(port)) throw new Error('Invalid demo port');
 const serviceKey = process.env.DEMO_SERVICE_KEY;
 if (!serviceKey || serviceKey.length < 32) throw new Error('DEMO_SERVICE_KEY (32+ characters) is required');
 const authOrigin = process.env.DEMO_AUTH_URL ?? 'http://127.0.0.1:3001';
+const poolMax = Number(process.env.DEMO_POOL_MAX ?? 10);
+if (!Number.isSafeInteger(poolMax) || poolMax < 1 || poolMax > 50) throw new Error('DEMO_POOL_MAX must be 1..50');
 async function remote(path, data) {
   try {
     const response = await fetch(authOrigin + '/internal/' + path, {
@@ -46,16 +49,22 @@ async function remote(path, data) {
   }
 }
 const database = new PostgresDatabase({
+  max: poolMax,
+  connectionTimeoutMillis: 1000,
+  options: '-c statement_timeout=4000 -c lock_timeout=3000',
   connectionString: isAuth
     ? 'postgres://postgres:postgres@127.0.0.1:55434/sapientum_identity'
     : 'postgres://postgres:postgres@127.0.0.1:55435/sapientum_tournament',
 });
-for (const migration of isAuth ? ['003-sessions.sql'] : ['001-staff.sql', '002-teams.sql']) {
+for (const migration of isAuth
+  ? ['003-sessions.sql', '004-session-maintenance.sql']
+  : ['001-staff.sql', '002-teams.sql']) {
   await database.migrate(await readFile(new URL(`../apps/api/migrations/${migration}`, import.meta.url), 'utf8'));
 }
 if (isAuth) {
   await database.migrate(
-    `CREATE TABLE IF NOT EXISTS demo_accounts (id TEXT PRIMARY KEY, salt TEXT NOT NULL, password_hash TEXT NOT NULL);`,
+    `CREATE TABLE IF NOT EXISTS demo_accounts (id TEXT PRIMARY KEY, salt TEXT NOT NULL, password_hash TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS demo_login_windows (key TEXT PRIMARY KEY, started_at TIMESTAMPTZ NOT NULL, hits INTEGER NOT NULL);`,
   );
   await database.transaction(async (sql) => {
     for (const id of ['organizer', 'leader', 'jury']) {
@@ -63,7 +72,7 @@ if (isAuth) {
       await sql.query('INSERT INTO demo_accounts VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [
         id,
         salt,
-        scryptSync('demo12345', salt, 32).toString('hex'),
+        (await passwordDigest('demo12345', salt)).toString('hex'),
       ]);
     }
   });
@@ -81,13 +90,14 @@ const accounts = {
       : remote('account', { id }).then((result) => result.exists),
 };
 const credentials = {
-  verify: (login, password) =>
-    database.transaction(async (sql) => {
+  verify: async (login, password) => {
+    const row = await database.transaction(async (sql) => {
       const { rows } = await sql.query('SELECT * FROM demo_accounts WHERE id=$1', [login]);
-      const row = rows[0];
-      const digest = scryptSync(password, row?.salt ?? 'missing-account', 32);
-      return row && timingSafeEqual(digest, Buffer.from(row.password_hash, 'hex')) ? row.id : null;
-    }),
+      return rows[0];
+    });
+    const digest = await passwordDigest(password, row?.salt ?? 'missing-account');
+    return row && timingSafeEqual(digest, Buffer.from(row.password_hash, 'hex')) ? row.id : null;
+  },
 };
 let staff, staffStore;
 const runtime = { newId: randomUUID, now: () => new Date().toISOString() };
@@ -104,11 +114,34 @@ if (!isAuth) {
     await staff.add({ tournamentId: 'demo', actorId: 'organizer', userId: 'jury', roles: ['jury'] });
   }
 }
+const activity = { sessionRowUpdates: 0 };
+const identityStore = isAuth
+  ? new PostgresSessionStore(database, (sql) => ({
+      isEnabled: async (id) => (await sql.query('SELECT 1 FROM demo_accounts WHERE id=$1', [id])).rowCount === 1,
+    }))
+  : null;
+const observedStore = {
+  run: (operation) =>
+    identityStore.run((context) =>
+      operation({
+        ...context,
+        sessions: new Proxy(context.sessions, {
+          get(target, property) {
+            if (property === 'touch')
+              return async (...args) => {
+                await target.touch(...args);
+                activity.sessionRowUpdates++;
+              };
+            const value = Reflect.get(target, property);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        }),
+      }),
+    ),
+};
 const sessions = isAuth
   ? new SessionService(
-      new PostgresSessionStore(database, (sql) => ({
-        isEnabled: async (id) => (await sql.query('SELECT 1 FROM demo_accounts WHERE id=$1', [id])).rowCount === 1,
-      })),
+      observedStore,
       credentials,
       new JoseAccessTokens(
         process.env.DEMO_JWT_KEY_BASE64 ? Buffer.from(process.env.DEMO_JWT_KEY_BASE64, 'base64') : randomBytes(32),
@@ -144,6 +177,14 @@ const teams = isAuth
       runtime,
     );
 const authRoutes = isAuth ? createSessionRoutes(sessions) : (request) => remote('route', request);
+const guardedLogin = loginGuard(database);
+const cleanup = isAuth
+  ? setInterval(
+      () => sessions.purgeEnded().catch((error) => console.error('Session cleanup failed:', error.message)),
+      60000,
+    )
+  : null;
+cleanup?.unref();
 const teamRoutes = isAuth ? null : withSessionAuthentication(sessions, createTeamRoutes(teams));
 const staffRoutes = isAuth ? null : withSessionAuthentication(sessions, createStaffRoutes(staff));
 const origin = `http://127.0.0.1:${port}`;
@@ -151,7 +192,6 @@ const csrf = randomBytes(32).toString('hex');
 const page = await readFile(new URL('./manual-check.html', import.meta.url));
 
 const server = createServer(async (request, response) => {
-  request.setEncoding('utf8');
   const send = (status, body) => {
     response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     response.end(JSON.stringify(body));
@@ -166,20 +206,17 @@ const server = createServer(async (request, response) => {
       )
         return send(403, { code: 'SERVICE_AUTH_REQUIRED' });
       if (request.method !== 'POST') return send(405, { code: 'METHOD_NOT_ALLOWED' });
-      let raw = '';
-      for await (const chunk of request) {
-        raw += chunk.toString('utf8');
-        if (Buffer.byteLength(raw) > 16384) return send(413, { code: 'BODY_TOO_LARGE' });
-      }
-      let data;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        return send(400, { code: 'INVALID_JSON' });
-      }
+      const data = await readJson(request);
+      if (request.url === '/internal/metrics') return send(200, activity);
       if (request.url === '/internal/authenticate') return send(200, await sessions.authenticate(data.accessToken));
       if (request.url === '/internal/account') return send(200, { exists: await accounts.exists(data.id) });
-      if (request.url === '/internal/route') return send(200, await authRoutes(data));
+      if (request.url === '/internal/route')
+        return send(
+          200,
+          new URL(data.url, 'http://localhost').pathname === '/auth/login' && data.method === 'POST'
+            ? await guardedLogin(data, () => authRoutes(data))
+            : await authRoutes(data),
+        );
       return send(404, { code: 'NOT_FOUND' });
     }
     if (request.headers.host !== `127.0.0.1:${port}`) return send(403, { code: 'INVALID_HOST' });
@@ -202,17 +239,7 @@ const server = createServer(async (request, response) => {
     }
     const csrfVerified = request.headers.origin === origin && request.headers['x-csrf-token'] === csrf;
     if (!['GET', 'HEAD'].includes(method) && !csrfVerified) return send(403, { code: 'CSRF_REJECTED' });
-    let raw = '';
-    for await (const chunk of request) {
-      raw += chunk.toString('utf8');
-      if (Buffer.byteLength(raw) > 16384) return send(413, { code: 'BODY_TOO_LARGE' });
-    }
-    let body;
-    try {
-      body = raw ? JSON.parse(raw) : undefined;
-    } catch {
-      return send(400, { code: 'INVALID_JSON' });
-    }
+    const body = await readJson(request);
     const accessToken = request.headers.authorization?.replace(/^Bearer /, '') ?? '';
     let result;
     if (path.startsWith('/auth/')) {
@@ -256,6 +283,8 @@ const server = createServer(async (request, response) => {
     }
     return send(result.status, result.body);
   } catch (error) {
+    if (error.code === 'INVALID_JSON') return send(400, { code: error.code });
+    if (error.code === 'BODY_TOO_LARGE') return send(413, { code: error.code });
     if (error instanceof SessionError && error.code === 'UNAUTHENTICATED') return send(401, { code: error.code });
     if (error.code === 'SERVICE_UNAVAILABLE') return send(503, { code: error.code });
     if (error.code === 'FORBIDDEN') return send(403, { code: error.code });

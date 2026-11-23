@@ -1,6 +1,6 @@
 export class SessionError extends Error {
   constructor(
-    readonly code: 'INVALID_INPUT' | 'UNAUTHENTICATED' | 'NOT_FOUND',
+    readonly code: 'INVALID_INPUT' | 'UNAUTHENTICATED' | 'NOT_FOUND' | 'SESSION_LIMIT',
     message: string,
   ) {
     super(message);

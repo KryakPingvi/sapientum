@@ -1,7 +1,8 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { SignJWT, decodeJwt, type JWTPayload } from 'jose';
 import {
   SessionService,
@@ -12,6 +13,7 @@ import {
   DEFAULT_SESSION_POLICY,
   createSessionRoutes,
   withSessionAuthentication,
+  DEFAULT_SESSION_LIMITS,
 } from '../src/modules/auth/index.js';
 import type { SessionPolicy, SessionTransaction, SessionHttpRequest } from '../src/modules/auth/index.js';
 import {
@@ -22,7 +24,9 @@ import {
 } from '../src/modules/staff/index.js';
 import { testSchema } from './database.js';
 
-const migration = readFileSync(new URL('../../migrations/003-sessions.sql', import.meta.url), 'utf8');
+const migration = ['003-sessions.sql', '004-session-maintenance.sql']
+  .map((name) => readFileSync(new URL('../../migrations/' + name, import.meta.url), 'utf8'))
+  .join('\n');
 const staffMigration = readFileSync(new URL('../../migrations/001-staff.sql', import.meta.url), 'utf8');
 const input = { login: 'alice', password: ' password ', deviceLabel: 'Phone', userAgent: 'Browser', ip: '127.0.0.1' };
 const denied = (error: unknown) => error instanceof SessionError && error.code === 'UNAUTHENTICATED';
@@ -458,4 +462,172 @@ test('production clock and cryptographic runtime round trip with a copied signin
   const current = (await service.list(grant.accessToken))[0]!;
   assert.equal(Date.parse(current.expiresAt) - Date.parse(current.createdAt), 30 * 86400 * 1000);
   assert.equal(Date.parse(grant.expiresAt) - Date.parse(current.createdAt), 900000);
+});
+
+test('active sessions and refresh history have transactional upper bounds', async (t) => {
+  const { store, credentials, tokens, clock, service, second } = await fixture(t);
+  const limited = new SessionService(store, credentials, tokens, clock, DEFAULT_SESSION_POLICY, {
+    ...DEFAULT_SESSION_LIMITS,
+    maxActive: 2,
+    maxRefresh: 2,
+  });
+  const one = await limited.login(input);
+  const results = await Promise.allSettled([limited.login(input), limited.login(input)]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((r) => r.status === 'rejected' && r.reason.code === 'SESSION_LIMIT').length, 1);
+  const routes = createSessionRoutes(limited);
+  assert.equal((await routes(request)).status, 429);
+  const rotated = await limited.refresh(one.refreshToken);
+  await assert.rejects(limited.refresh(rotated.refreshToken), denied);
+  await assert.rejects(second().authenticate(rotated.accessToken), denied);
+  await limited.login(input);
+  for (const limits of [
+    { ...DEFAULT_SESSION_LIMITS, maxActive: 0 },
+    { ...DEFAULT_SESSION_LIMITS, maxActive: 101 },
+    { ...DEFAULT_SESSION_LIMITS, maxRefresh: 10001 },
+    { ...DEFAULT_SESSION_LIMITS, retentionSeconds: 367 * 86400 },
+  ])
+    assert.throws(() => new SessionService(store, credentials, tokens, clock, DEFAULT_SESSION_POLICY, limits), invalid);
+  assert.ok((await service.list((await service.login({ ...input, login: 'bob' })).accessToken)).length);
+});
+
+test('session pages bound history and validate cursors without exposing other accounts', async (t) => {
+  const { service, routes } = await fixture(t);
+  const current = await service.login(input);
+  await service.login({ ...input, login: 'bob' });
+  for (let i = 0; i < 21; i++) {
+    const old = await service.login(input);
+    await service.revoke(current.accessToken, old.sessionId);
+  }
+  const first = await service.listPublic(current.accessToken, null, null);
+  assert.equal(first.items.length, 20);
+  assert.ok(first.nextCursor);
+  const next = await service.listPublic(current.accessToken, '20', first.nextCursor);
+  assert.equal(next.items.length, 2);
+  assert.equal(next.nextCursor, null);
+  assert.equal(new Set([...first.items, ...next.items].map((s) => s.id)).size, 22);
+  for (const limit of ['0', '-1', '101', 'x', '', '1.5']) {
+    assert.equal(
+      (
+        await routes({
+          ...request,
+          method: 'GET',
+          url: '/auth/sessions?limit=' + limit,
+          accessToken: current.accessToken,
+        })
+      ).status,
+      400,
+    );
+  }
+  await assert.rejects(service.listPublic(current.accessToken, '100', ' '), invalid);
+  assert.equal((await service.listPublic(current.accessToken, '100', 'zzzz')).items.length, 0);
+});
+
+test('cleanup removes only old ended sessions in bounded batches and retains replay detection for live families', async (t) => {
+  const { service, tick, database } = await fixture(t, {
+    accessSeconds: 900,
+    idleSeconds: 30 * 86400,
+    absoluteSeconds: 60 * 86400,
+  });
+  const revoked = await service.login(input);
+  await service.revoke(revoked.accessToken, revoked.sessionId);
+  const expired = await service.login(input);
+  await database.transaction((sql) =>
+    sql.query('UPDATE auth_sessions SET idle_expires_at=$1 WHERE id=$2', ['2026-11-10T12:00:00Z', expired.sessionId]),
+  );
+  const live = await service.login(input);
+  const rotated = await service.refresh(live.refreshToken);
+  tick(15 * 86400);
+  const fresh = await service.refresh(rotated.refreshToken);
+  assert.equal(await service.purgeEnded(1), 1);
+  assert.equal(await service.purgeEnded(), 1);
+  assert.equal(await service.purgeEnded(), 0);
+  for (const batch of [0, 1.5, 1001]) assert.throws(() => service.purgeEnded(batch), invalid);
+  await database.transaction(async (sql) => {
+    assert.equal(
+      (await sql.query('SELECT count(*) FROM auth_refresh_tokens WHERE session_id=$1', [live.sessionId])).rows[0].count,
+      '3',
+    );
+  });
+  await assert.rejects(service.refresh(live.refreshToken), denied);
+  await assert.rejects(service.authenticate(fresh.accessToken), denied);
+});
+
+test('SQL-bound account checks work with one connection and pool acquisition has a deadline', async (t) => {
+  const { open, credentials, tokens, clock } = await fixture(t);
+  const database = open({ max: 1, connectionTimeoutMillis: 500 });
+  await database.migrate("CREATE TABLE account_flags(id TEXT PRIMARY KEY); INSERT INTO account_flags VALUES('alice')");
+  const accounts = (sql: import('../src/infrastructure/postgres.js').SqlClient) => ({
+    isEnabled: async (id: string) => (await sql.query('SELECT 1 FROM account_flags WHERE id=$1', [id])).rowCount === 1,
+  });
+  const service = new SessionService(new PostgresSessionStore(database, accounts), credentials, tokens, clock);
+  const grant = await service.login(input);
+  assert.equal((await Promise.all(Array.from({ length: 8 }, () => service.authenticate(grant.accessToken)))).length, 8);
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const holding = database.transaction(async (sql) => {
+    await sql.query('SELECT 1');
+    entered();
+    await gate;
+  });
+  await ready;
+  try {
+    await assert.rejects(service.authenticate(grant.accessToken), /timeout/i);
+  } finally {
+    release();
+    await holding;
+  }
+  assert.equal((await service.authenticate(grant.accessToken)).userId, 'alice');
+});
+
+test('refresh racing ended-session deletion returns a denial rather than a missing-row failure', async (t) => {
+  const { database, open, service, clock } = await fixture(t);
+  const grant = await service.login(input);
+  const label = 'cleanup-' + randomUUID();
+  await service.revoke(grant.accessToken, grant.sessionId);
+  const other = open({ application_name: label });
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const cleanup = database.transaction(async (sql) => {
+    await sql.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE', [grant.sessionId]);
+    entered();
+    await gate;
+    await sql.query('DELETE FROM auth_refresh_tokens WHERE session_id=$1', [grant.sessionId]);
+    await sql.query('DELETE FROM auth_sessions WHERE id=$1', [grant.sessionId]);
+  });
+  await ready;
+  const lookup = new PostgresSessionStore(other, () => ({ isEnabled: async () => true })).run(({ sessions }) =>
+    sessions.findRefresh(clock.digest(grant.refreshToken)),
+  );
+  try {
+    let waiting = false;
+    for (let i = 0; i < 100; i++) {
+      waiting = await database.transaction(
+        async (sql) =>
+          (
+            await sql.query(
+              "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock') AS waiting",
+              [label],
+            )
+          ).rows[0].waiting,
+      );
+      if (waiting) break;
+      await delay(10);
+    }
+    assert.equal(waiting, true);
+  } finally {
+    release();
+    await cleanup;
+  }
+  assert.equal(await lookup, null);
 });

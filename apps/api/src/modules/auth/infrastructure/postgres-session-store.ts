@@ -54,12 +54,39 @@ class PostgresSessionRepository implements SessionRepository {
     return rows[0] ? restore(rows[0]) : null;
   }
 
-  async list(userId: string): Promise<readonly SessionRecord[]> {
+  async list(userId: string, limit = 100, after: string | null = null): Promise<readonly SessionRecord[]> {
     const { rows } = await this.sql.query<SessionRow>(
-      'SELECT * FROM auth_sessions WHERE user_id = $1 ORDER BY created_at, id',
-      [userId],
+      'SELECT * FROM auth_sessions WHERE user_id = $1 AND ($3::text IS NULL OR id > $3) ORDER BY id LIMIT $2',
+      [userId, limit, after],
     );
     return rows.map(restore);
+  }
+
+  async countActive(userId: string, now: string): Promise<number> {
+    const { rows } = await this.sql.query<{ count: string }>(
+      'SELECT count(*) FROM auth_sessions WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>$2 AND idle_expires_at>$2',
+      [userId, now],
+    );
+    return Number(rows[0]!.count);
+  }
+
+  async countRefresh(sessionId: string): Promise<number> {
+    const { rows } = await this.sql.query<{ count: string }>(
+      'SELECT count(*) FROM auth_refresh_tokens WHERE session_id=$1',
+      [sessionId],
+    );
+    return Number(rows[0]!.count);
+  }
+
+  async purgeEnded(cutoff: string, limit: number): Promise<number> {
+    const { rows } = await this.sql.query<{ id: string }>(
+      `SELECT id FROM auth_sessions WHERE revoked_at < $1 OR LEAST(expires_at,idle_expires_at) < $1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`,
+      [cutoff, limit],
+    );
+    const ids = rows.map((row) => row.id);
+    await this.sql.query('DELETE FROM auth_refresh_tokens WHERE session_id=ANY($1::text[])', [ids]);
+    const result = await this.sql.query('DELETE FROM auth_sessions WHERE id=ANY($1::text[])', [ids]);
+    return result.rowCount!;
   }
 
   async touch(s: SessionRecord): Promise<void> {
@@ -96,7 +123,8 @@ class PostgresSessionRepository implements SessionRepository {
     );
     if (!rows[0]) return null;
     // Read token state AFTER the parent lock; a concurrent rotation may have consumed it while we waited.
-    const session = (await this.find(rows[0].session_id, rows[0].user_id))!;
+    const session = await this.find(rows[0].session_id, rows[0].user_id);
+    if (!session) return null;
     const result = await this.sql.query<{ expires_at: Date; used_at: Date | null }>(
       'SELECT expires_at, used_at FROM auth_refresh_tokens WHERE digest = $1',
       [digest],

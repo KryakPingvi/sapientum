@@ -1,6 +1,11 @@
 export const SESSION_STATES = ['active', 'expired', 'revoked'] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
 
+export interface SessionPage {
+  readonly items: readonly SessionDto[];
+  readonly nextCursor: string | null;
+}
+
 export interface SessionDto {
   readonly id: string;
   readonly deviceLabel: string;

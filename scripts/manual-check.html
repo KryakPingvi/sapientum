@@ -254,8 +254,9 @@
       }
     }
     $('load-staff').onclick = run(staffList);
-    async function sessionList() {
-      const sessions = await call('/auth/sessions');
+    async function sessionList(after = null) {
+      const page = await call('/auth/sessions' + (after ? '?after=' + encodeURIComponent(after) : ''));
+      const sessions = page.items;
       $('sessions').replaceChildren();
       for (const session of sessions) {
         const element = row(
@@ -271,6 +272,7 @@
             } else await sessionList();
           });
       }
+      if (page.nextCursor) button($('sessions'), 'Следующая страница', () => sessionList(page.nextCursor));
     }
     $('load-sessions').onclick = run(sessionList);
     run(async () => {

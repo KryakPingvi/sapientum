@@ -19,8 +19,8 @@ export async function testSchema(t: TestContext, ...migrations: string[]) {
   const schema = `test_${randomUUID().replaceAll('-', '')}`;
   await admin(`CREATE SCHEMA ${schema}`);
   const opened: PostgresDatabase[] = [];
-  const open = () => {
-    const database = new PostgresDatabase({ connectionString: url, options: `-c search_path=${schema}` });
+  const open = (config: pg.PoolConfig = {}) => {
+    const database = new PostgresDatabase({ ...config, connectionString: url, options: `-c search_path=${schema}` });
     opened.push(database);
     return database;
   };

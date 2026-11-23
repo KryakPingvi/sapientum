@@ -1,4 +1,4 @@
-import type { AccessGrant, SessionDto, SessionPrincipal } from '@sapientum/contracts/sessions';
+import type { AccessGrant, SessionDto, SessionPrincipal, SessionPage } from '@sapientum/contracts/sessions';
 import { SESSION_STATES } from '@sapientum/contracts/sessions';
 import {
   active,
@@ -24,8 +24,20 @@ export interface SessionGrant extends AccessGrant {
   refreshExpiresAt: string;
 }
 
+export interface SessionLimits {
+  maxActive: number;
+  maxRefresh: number;
+  retentionSeconds: number;
+}
+export const DEFAULT_SESSION_LIMITS: Readonly<SessionLimits> = Object.freeze({
+  maxActive: 10,
+  maxRefresh: 2048,
+  retentionSeconds: 7 * 86400,
+});
+
 export class SessionService {
   private readonly policy: Readonly<SessionPolicy>;
+  private readonly limits: Readonly<SessionLimits>;
 
   constructor(
     private readonly transactions: SessionTransaction,
@@ -33,8 +45,17 @@ export class SessionService {
     private readonly tokens: AccessTokens,
     private readonly runtime: SessionRuntime,
     policy: SessionPolicy = DEFAULT_SESSION_POLICY,
+    limits: SessionLimits = DEFAULT_SESSION_LIMITS,
   ) {
     this.policy = sessionPolicy(policy);
+    if (
+      !Object.values(limits).every((value) => Number.isSafeInteger(value) && value > 0) ||
+      limits.maxActive > 100 ||
+      limits.maxRefresh > 10000 ||
+      limits.retentionSeconds > 366 * 86400
+    )
+      throw new SessionError('INVALID_INPUT', 'Invalid session limits.');
+    this.limits = Object.freeze({ ...limits });
   }
 
   async login(input: {
@@ -58,6 +79,8 @@ export class SessionService {
       await sessions.lockUser(userId);
       if (!(await accounts.isEnabled(userId))) throw this.denied();
       const now = this.runtime.now();
+      if ((await sessions.countActive(userId, now.toISOString())) >= this.limits.maxActive)
+        throw new SessionError('SESSION_LIMIT', 'Close an existing session before signing in again.');
       const session: SessionRecord = {
         id: this.runtime.newId(),
         userId,
@@ -103,6 +126,10 @@ export class SessionService {
         !(await accounts.isEnabled(session.userId))
       )
         return null;
+      if ((await sessions.countRefresh(session.id)) >= this.limits.maxRefresh) {
+        await sessions.revoke(session.id, now.toISOString());
+        return null;
+      }
       await sessions.consumeRefresh(digest, now.toISOString());
       return this.grant(sessions, session, now);
     });
@@ -110,12 +137,30 @@ export class SessionService {
     return grant;
   }
 
-  async list(accessToken: string): Promise<readonly SessionDto[]> {
+  async listPublic(accessToken: string, limit: string | null, after: string | null): Promise<SessionPage> {
+    const size = limit === null ? 20 : Number(limit);
+    if ((limit !== null && !/^[1-9]\d{0,2}$/.test(limit)) || size > 100)
+      throw new SessionError('INVALID_INPUT', 'limit must be 1..100');
+    if (after !== null) sessionText(after, 200);
+    const rows = await this.list(accessToken, size + 1, after);
+    const items = rows.slice(0, size);
+    return { items, nextCursor: rows.length > size ? items[items.length - 1]!.id : null };
+  }
+
+  /** Internal maintenance only: never expose an unauthenticated cleanup route. */
+  purgeEnded(limit = 100): Promise<number> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
+      throw new SessionError('INVALID_INPUT', 'Invalid cleanup batch size.');
+    const cutoff = new Date(this.runtime.now().getTime() - this.limits.retentionSeconds * 1000).toISOString();
+    return this.transactions.run(({ sessions }) => sessions.purgeEnded(cutoff, limit));
+  }
+
+  async list(accessToken: string, limit = 100, after: string | null = null): Promise<readonly SessionDto[]> {
     const now = this.runtime.now();
     const principal = await this.tokens.verify(accessToken, now);
     return this.transactions.run(async ({ sessions, accounts }) => {
       const checkedAt = await this.authorized(sessions, accounts, principal);
-      return (await sessions.list(principal.userId)).map((session) => ({
+      return (await sessions.list(principal.userId, limit, after)).map((session) => ({
         id: session.id,
         deviceLabel: session.deviceLabel,
         userAgent: session.userAgent,
