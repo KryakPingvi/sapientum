@@ -1,0 +1,32 @@
+services:
+  tournament-db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sapientum_tournament
+    ports:
+      - 127.0.0.1:55435:5432
+    volumes:
+      - tournament-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d sapientum_tournament]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  identity-db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sapientum_identity
+    ports:
+      - 127.0.0.1:55434:5432
+    volumes:
+      - identity-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d sapientum_identity]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  tournament-postgres:
+  identity-postgres:

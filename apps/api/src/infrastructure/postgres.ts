@@ -6,7 +6,7 @@ export class PostgresDatabase {
   private readonly pool: pg.Pool;
 
   constructor(config: pg.PoolConfig) {
-    this.pool = new pg.Pool(config);
+    this.pool = new pg.Pool({ connectionTimeoutMillis: 3000, query_timeout: 5000, ...config });
   }
 
   async migrate(sql: string): Promise<void> {
