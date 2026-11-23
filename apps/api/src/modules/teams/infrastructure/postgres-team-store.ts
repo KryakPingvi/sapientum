@@ -79,10 +79,11 @@ class PostgresTeamRepository implements TeamRepository {
     if (result.rowCount !== 1) throw new TeamError('ALREADY_CONFIRMED', 'Team is no longer pending.');
   }
 
-  async list(tournamentId: string, status: TeamFilter): Promise<readonly Team[]> {
+  async list(tournamentId: string, status: TeamFilter, limit: number, after: string | null): Promise<readonly Team[]> {
     const { rows } = await this.sql.query<TeamRow>(
-      `SELECT * FROM teams WHERE tournament_id = $1 AND ($2 = 'all' OR status = $2) ORDER BY submitted_at, id`,
-      [tournamentId, status],
+      `SELECT * FROM teams WHERE tournament_id = $1 AND ($2 = 'all' OR status = $2)
+       AND ($3::text IS NULL OR id > $3) ORDER BY id LIMIT $4`,
+      [tournamentId, status, after, limit],
     );
     return rows.map(restore);
   }

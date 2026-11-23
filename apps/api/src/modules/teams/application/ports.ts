@@ -5,7 +5,7 @@ export interface TeamRepository {
   insert(team: Team): Promise<void>;
   findById(tournamentId: string, teamId: string): Promise<Team | null>;
   confirm(team: Team): Promise<void>;
-  list(tournamentId: string, status: TeamFilter): Promise<readonly Team[]>;
+  list(tournamentId: string, status: TeamFilter, limit: number, after: string | null): Promise<readonly Team[]>;
 }
 
 export interface TeamAccountDirectory {

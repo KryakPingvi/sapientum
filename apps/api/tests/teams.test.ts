@@ -284,7 +284,7 @@ test('team transaction rolls back failures and does not turn unrelated SQL failu
 test('public HTTP lists need no session and writes trust only the session principal', async (t) => {
   const { routes } = await fixture(t);
   const base = { url: '/tournaments/t1/teams', principal: null };
-  assert.deepEqual(await routes({ ...base, method: 'GET' }), { status: 200, body: [] });
+  assert.deepEqual(await routes({ ...base, method: 'GET' }), { status: 200, body: { items: [], nextCursor: null } });
   assert.equal((await routes({ ...base, method: 'POST', body: application })).status, 401);
   const response = await routes({
     ...base,
@@ -301,7 +301,7 @@ test('public HTTP lists need no session and writes trust only the session princi
   assert.equal((await routes({ ...confirm, principal: { userId: 'admin' } })).status, 200);
   assert.equal((await routes({ ...confirm, principal: { userId: 'admin' } })).status, 409);
   const list = await routes({ ...base, url: `${base.url}?status=confirmed`, method: 'GET' });
-  assert.equal((list.body as unknown[]).length, 1);
+  assert.equal((list.body as { items: unknown[] }).items.length, 1);
 });
 
 test('HTTP adapter returns validation and domain errors and rethrows infrastructure failures', async (t) => {
@@ -334,4 +334,89 @@ test('HTTP adapter returns validation and domain errors and rethrows infrastruct
     },
   };
   await assert.rejects(createTeamRoutes(new TeamService(badStaff, runtime))(base), /broken integration/);
+});
+
+test('public pages whitelist fields, bound results and traverse tied timestamps without duplicates', async (t) => {
+  const { service, routes } = await fixture(t);
+  const first = await service.submit(application);
+  const second = await service.submit({ ...application, name: 'Second' });
+  const third = await service.submit({ ...application, name: 'Third' });
+  const request = (query = '') => routes({ method: 'GET', url: '/tournaments/t1/teams' + query, principal: null });
+  const page = await request('?limit=2');
+  const body = page.body as { items: { id: string }[]; nextCursor: string | null };
+  assert.equal(body.items.length, 2);
+  assert.ok(body.nextCursor);
+  for (const team of body.items) assert.deepEqual(Object.keys(team).sort(), ['id', 'name', 'organization', 'status']);
+  const next = (await request('?limit=2&after=' + encodeURIComponent(body.nextCursor))).body as typeof body;
+  assert.equal(next.items.length, 1);
+  assert.equal(next.nextCursor, null);
+  assert.deepEqual(
+    [...body.items, ...next.items].map((team) => team.id).sort(),
+    [first.id, second.id, third.id].sort(),
+  );
+  for (const limit of ['0', '-1', '101', '1.5', 'x', '', '1000'])
+    assert.equal((await request('?limit=' + limit)).status, 400);
+  assert.equal((await request('?after=%20')).status, 400);
+  assert.equal(((await request('?limit=100&after=zzzz')).body as typeof body).items.length, 0);
+  await service.confirm({ tournamentId: 't1', actorId: 'admin', teamId: first.id });
+  const filtered = (await request('?status=confirmed&limit=1')).body as typeof body;
+  assert.equal(filtered.items[0]!.id, first.id);
+  assert.equal(filtered.nextCursor, null);
+  // Default page cannot silently return the entire tournament.
+  for (let i = 0; i < 50; i++) await service.submit({ ...application, name: `Page ${i}` });
+  const defaultPage = (await request()).body as typeof body;
+  assert.equal(defaultPage.items.length, 50);
+  assert.ok(defaultPage.nextCursor);
+});
+
+test('independent confirmations hold compatible permission locks while exclusions remain exclusive', async (t) => {
+  const { service, store, open, dependencies } = await fixture(t);
+  const one = await service.submit(application);
+  const two = await service.submit({ ...application, name: 'Parallel' });
+  let count = 0;
+  let entered!: () => void;
+  const both = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let unblock!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    unblock = resolve;
+  });
+  const paused = (transaction: TeamTransaction) =>
+    new TeamService(
+      {
+        run: (operation) =>
+          transaction.run((context) =>
+            operation({
+              ...context,
+              requireOrganizer: async (id, actor) => {
+                await context.requireOrganizer(id, actor);
+                if (++count === 2) entered();
+                await gate;
+              },
+            }),
+          ),
+      },
+      runtime,
+    );
+  const results = Promise.allSettled([
+    paused(store).confirm({ tournamentId: 't1', actorId: 'admin', teamId: one.id }),
+    paused(new PostgresTeamStore(open(), dependencies)).confirm({
+      tournamentId: 't1',
+      actorId: 'admin',
+      teamId: two.id,
+    }),
+  ]);
+  try {
+    await Promise.race([
+      both,
+      delay(3000).then(() => {
+        throw new Error('Confirmations serialized by permission lock');
+      }),
+    ]);
+  } finally {
+    unblock();
+    await results;
+  }
+  assert.ok((await results).every((result) => result.status === 'fulfilled'));
 });

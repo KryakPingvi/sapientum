@@ -90,11 +90,11 @@
 
 **Контекст.** Список команд открыт всем, нужны три представления.
 
-**Решение.** GET не требует сессии. Фильтры `all`, `pending`, `confirmed`, по умолчанию `all`. Возвращается `TeamDto`, порядок — время подачи и идентификатор. DTO содержит организацию, ФИО и идентификатор руководителя, а также отметки подтверждения.
+**Решение.** GET не требует сессии. Фильтры `all`, `pending`, `confirmed`, по умолчанию `all`. Возвращается `PublicTeamPage` с `items` и `nextCursor`, порядок — неизменяемый ID. Публичная проекция содержит только ID, название, организацию и статус. `limit` по умолчанию 50, максимум 100; `after` продолжает обход после ID последней строки страницы. ФИО и внутренние ссылки не публикуются.
 
 **Обоснование.** Один контракт используется HTTP-адаптером и будущим интерфейсом. Явно фиксируется состав публичных данных. Неизвестный фильтр возвращает 400.
 
-**Реализация.** `packages/contracts/src/teams.ts`, `TeamService.list`, `http/team-routes.ts`.
+**Реализация.** `packages/contracts/src/teams.ts`, `TeamService.listPublic`, `http/team-routes.ts`. Актуальные границы сервисов и shared/exclusive-блокировок описаны в [03-service-boundaries.md](03-service-boundaries.md).
 
 **Проверка.** `public HTTP lists need no session and writes trust only the session principal`, `HTTP adapter returns validation and domain errors and rethrows infrastructure failures`.
 

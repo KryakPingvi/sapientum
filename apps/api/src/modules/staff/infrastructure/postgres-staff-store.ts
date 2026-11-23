@@ -13,7 +13,7 @@ export async function requirePostgresStaffPermission(
   permission: StaffPermission,
 ): Promise<void> {
   const members = new PostgresStaffRepository(sql);
-  await members.lockTournament(tournamentId);
+  await sql.query("SELECT pg_advisory_xact_lock_shared(hashtext('staff'), hashtext($1))", [tournamentId]);
   await new StaffAccess(members).require(tournamentId, userId, permission);
 }
 

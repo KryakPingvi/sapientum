@@ -3,6 +3,18 @@ export type TeamStatus = (typeof TEAM_STATUSES)[number];
 export const TEAM_FILTERS = ['all', ...TEAM_STATUSES] as const;
 export type TeamFilter = (typeof TEAM_FILTERS)[number];
 
+export interface PublicTeamDto {
+  readonly id: string;
+  readonly name: string;
+  readonly organization: string;
+  readonly status: TeamStatus;
+}
+
+export interface PublicTeamPage {
+  readonly items: readonly PublicTeamDto[];
+  readonly nextCursor: string | null;
+}
+
 export interface TeamDto {
   readonly id: string;
   readonly tournamentId: string;
